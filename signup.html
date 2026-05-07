@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create your GitHub account</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: #FAF9F5;
+      color: #1F1E1D;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 40px;
+      max-width: 520px;
+      width: 100%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    h1 { font-size: 24px; margin: 0 0 8px; font-weight: 600; }
+    .tagline { color: #666; margin: 0 0 28px; line-height: 1.5; }
+
+    .steps {
+      list-style: none; padding: 0; margin: 0 0 28px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .steps li {
+      display: flex; gap: 14px; align-items: flex-start;
+      padding: 14px 16px; background: #FAF9F5; border-radius: 8px;
+      font-size: 14px; line-height: 1.5;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 24px; height: 24px; border-radius: 50%;
+      background: #C96442; color: white;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 600;
+    }
+    .step-num.done { background: #1E8230; }
+    .step-num.done::before { content: "✓"; }
+    .step-num.done span { display: none; }
+
+    .step-text { flex: 1; padding-top: 1px; }
+    .step-text b { display: block; margin-bottom: 2px; }
+    .step-text small { color: #666; font-size: 12px; }
+
+    .button-stack { display: flex; flex-direction: column; gap: 10px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+      text-decoration: none; padding: 14px 22px; border-radius: 8px;
+      font-size: 16px; font-weight: 500; cursor: pointer;
+      border: 2px solid transparent; font-family: inherit;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .btn-primary { background: #1F1E1D; color: white; }
+    .btn-primary:hover { background: #333; }
+    .btn-primary:disabled { background: #ccc; cursor: not-allowed; }
+    .btn-link {
+      background: transparent; color: #888; text-decoration: none;
+      font-size: 13px; padding: 8px;
+    }
+    .btn-link:hover { color: #C96442; }
+
+    .open-link {
+      display: inline-block; color: #C96442; text-decoration: underline;
+      font-size: 13px; margin-top: 8px; cursor: pointer;
+    }
+
+    .hint {
+      text-align: center; color: #888; font-size: 13px; margin-top: 18px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Let's create your GitHub account</h1>
+    <p class="tagline">
+      You only need to do this once. It's free, takes ~30 seconds, and just
+      needs an email address.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <div class="step-num"><span>1</span></div>
+        <div class="step-text">
+          <b>A new tab just opened with GitHub's signup page.</b>
+          <small>If it didn't, <a class="open-link" id="open-link">click here to open it</a>.</small>
+        </div>
+      </li>
+      <li>
+        <div class="step-num"><span>2</span></div>
+        <div class="step-text">
+          <b>Fill in your email, password, and a username.</b>
+          <small>You'll get a verification email — click the link in it.</small>
+        </div>
+      </li>
+      <li>
+        <div class="step-num"><span>3</span></div>
+        <div class="step-text">
+          <b>Come back to this tab when done.</b>
+          <small>Stay logged in on GitHub &mdash; we'll connect to your new account next.</small>
+        </div>
+      </li>
+    </ol>
+
+    <div class="button-stack">
+      <button class="btn btn-primary" id="done-btn">
+        I've created my account, continue
+      </button>
+      <a href="/start" class="btn btn-link">Back</a>
+    </div>
+
+    <p class="hint">
+      GitHub may ask you to authorize the app on the next screen &mdash; that's normal,
+      just click <b>Authorize</b>.
+    </p>
+  </div>
+
+  <script>
+    const SIGNUP_URL = "https://github.com/signup";
+
+    // Auto-open the GitHub signup page in a new tab when this page loads.
+    // (Done via JS, not a server redirect, so the user doesn't lose this page.)
+    let opened = false;
+    function openSignup() {
+      window.open(SIGNUP_URL, "_blank", "noopener");
+      opened = true;
+    }
+    // Open on page load
+    setTimeout(openSignup, 200);
+
+    // Manual fallback if popup blocked
+    document.getElementById("open-link").addEventListener("click", openSignup);
+
+    // When user clicks "I've created my account", send them to OAuth.
+    // GitHub OAuth will then prompt them to log in (using the account they
+    // just made) and authorize the app, then bounce back to /auth/github/callback.
+    document.getElementById("done-btn").addEventListener("click", () => {
+      window.location.href = "/auth/github";
+    });
+  </script>
+</body>
+</html>

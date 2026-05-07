@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Launcher</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: #FAF9F5;
+      color: #1F1E1D;
+      margin: 0;
+      min-height: 100vh;
+      padding: 40px 20px;
+      line-height: 1.6;
+    }
+    .wrap {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .hero {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .hero h1 {
+      font-size: 36px;
+      margin: 0 0 12px;
+      font-weight: 600;
+      letter-spacing: -0.5px;
+    }
+    .hero .lead {
+      font-size: 17px;
+      color: #555;
+      margin: 0 auto;
+      max-width: 480px;
+    }
+
+    /* Section card */
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 28px 32px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      margin-bottom: 18px;
+    }
+    .card h2 {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0 0 16px;
+      color: #1F1E1D;
+    }
+    .card p { margin: 0 0 12px; color: #444; font-size: 15px; }
+    .card p:last-child { margin-bottom: 0; }
+
+    /* Step list */
+    .steps { padding: 0; margin: 0; list-style: none; counter-reset: step; }
+    .steps li {
+      counter-increment: step;
+      display: flex;
+      gap: 16px;
+      padding: 12px 0;
+      border-top: 1px solid #f0ede5;
+      font-size: 15px;
+      color: #1F1E1D;
+    }
+    .steps li:first-child { border-top: none; padding-top: 0; }
+    .steps li:last-child { padding-bottom: 0; }
+    .steps li::before {
+      content: counter(step);
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #C96442;
+      color: white;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+    }
+    .steps b { color: #1F1E1D; }
+    .steps small { color: #666; font-size: 13px; display: block; margin-top: 2px; }
+
+    /* Requirements */
+    .req-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 4px;
+    }
+    .req {
+      padding: 14px 16px;
+      background: #FAF9F5;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .req-title { font-weight: 600; color: #1F1E1D; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+    .req small { color: #666; font-size: 12px; line-height: 1.5; }
+    .badge {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+    .badge-free { background: #DCEFD8; color: #1E5C1E; }
+    .badge-paid { background: #FCE7DC; color: #9A4416; }
+
+    /* Launch button */
+    .launch-area {
+      text-align: center;
+      margin: 40px 0 28px;
+    }
+    .launch-btn {
+      display: inline-block;
+      background: #1F1E1D;
+      color: white;
+      text-decoration: none;
+      padding: 16px 36px;
+      border-radius: 10px;
+      font-size: 17px;
+      font-weight: 500;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .launch-btn:hover { background: #C96442; }
+    .launch-btn:active { transform: scale(0.98); }
+    .launch-sub {
+      color: #888;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      color: #999;
+      font-size: 12px;
+      margin-top: 32px;
+      padding-top: 20px;
+      border-top: 1px solid #ebe8de;
+    }
+    .footer a { color: #C96442; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- Hero -->
+    <div class="hero">
+      <h1>Claude Launcher</h1>
+      <p class="lead">
+        Start a cloud workspace with Claude Code already installed. No download.
+        No setup. Ready in a couple of minutes.
+      </p>
+    </div>
+
+    <!-- What it is -->
+    <div class="card">
+      <h2>What is this?</h2>
+      <p>
+        Claude Launcher gives you a ready-to-use coding environment in your browser.
+        It runs on a cloud computer (a GitHub Codespace), with Claude Code already
+        installed and configured. You just sign in and start typing — no terminal
+        installs, no PATH setup, no Windows or Mac headaches.
+      </p>
+      <p>
+        It's like having a fresh laptop with everything pre-configured, accessed
+        through your web browser.
+      </p>
+    </div>
+
+    <!-- How it works -->
+    <div class="card">
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li>
+          <div>
+            <b>Click "Launch Claude Code"</b> below
+            <small>You'll be asked whether you have a GitHub account</small>
+          </div>
+        </li>
+        <li>
+          <div>
+            <b>Sign in with GitHub</b> (or create an account in 30 seconds)
+            <small>GitHub is free. You'll just need an email address.</small>
+          </div>
+        </li>
+        <li>
+          <div>
+            <b>Wait ~2 minutes</b> while your workspace boots
+            <small>You'll see a progress screen showing each step</small>
+          </div>
+        </li>
+        <li>
+          <div>
+            <b>VS Code opens in the browser</b>
+            <small>Type <code>claude</code> in the terminal to start coding</small>
+          </div>
+        </li>
+        <li>
+          <div>
+            <b>Sign in to Anthropic when prompted</b>
+            <small>This happens once, the first time you run Claude Code</small>
+          </div>
+        </li>
+      </ol>
+    </div>
+
+    <!-- Requirements -->
+    <div class="card">
+      <h2>What you need</h2>
+      <div class="req-grid">
+        <div class="req">
+          <div class="req-title">
+            <span class="badge badge-free">Free</span>
+            GitHub account
+          </div>
+          <small>
+            Free 60 hours/month of cloud compute included. Used to run the workspace.
+            Don't have one? You can create it during sign-in.
+          </small>
+        </div>
+        <div class="req">
+          <div class="req-title">
+            <span class="badge badge-paid">Paid</span>
+            Anthropic account
+          </div>
+          <small>
+            Required for Claude Code itself: Pro, Max, Team, Enterprise, or API credits.
+            There's no free tier of Claude Code.
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Launch -->
+    <div class="launch-area">
+      <a href="/start" class="launch-btn">Launch Claude Code</a>
+      <p class="launch-sub">Takes you to GitHub sign-in next</p>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      Cloud workspace by GitHub Codespaces &middot;
+      AI by <a href="https://claude.com" target="_blank" rel="noopener">Claude</a>
+    </div>
+
+  </div>
+</body>
+</html>

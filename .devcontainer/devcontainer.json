@@ -1,0 +1,42 @@
+{
+  "name": "Claude Code Workspace",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code"
+      ],
+      "unwantedRecommendations": [
+        "GitHub.copilot",
+        "GitHub.copilot-chat"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "chat.commandCenter.enabled": false,
+        "chat.experimental.offerSetup": false,
+        "github.copilot.enable": {
+          "*": false
+        },
+        "workbench.startupEditor": "readme",
+        "workbench.panel.defaultLocation": "bottom",
+        "terminal.integrated.tabs.enabled": false
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/install-claude.sh",
+  "postAttachCommand": {
+    "welcome": "bash .devcontainer/welcome.sh"
+  },
+  "remoteUser": "vscode",
+  "forwardPorts": [],
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "4gb"
+  }
+}
