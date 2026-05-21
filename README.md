@@ -14,7 +14,10 @@ The black panel at the bottom of the screen. If it's not there: **Terminal → N
 claude
 ```
 
-**3. Log in**
+**3. Pick a colour theme**
+Claude Code opens with a theme picker. Use **↑ ↓ arrow keys** to move between options and press **Enter** to select. You can change it later anytime by typing `/theme`.
+
+**4. Log in**
 Choose **option 1** (Claude account with subscription). A browser tab opens — sign in with your claude.ai account and come back.
 
 > You need a paid Claude plan (Pro or higher). Get one at [claude.ai/upgrade](https://claude.ai/upgrade).
