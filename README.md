@@ -1,21 +1,50 @@
 # Claude Code Workspace
 
-A pre-configured cloud environment with [Claude Code](https://code.claude.com) ready to use.
+Your cloud coding environment with Claude Code pre-installed.
 
-This repo isn't meant to be cloned manually. It's a template that the **Claude Launcher** uses to spin up Codespaces for you.
+---
 
-## What you get
+## Getting started
 
-- Ubuntu base image with Node.js LTS and Git
-- Claude Code (CLI) auto-installed and on PATH
-- VS Code in the browser with the Claude Code extension
+**1. Open the terminal**
+The black panel at the bottom of the screen. If it's not there: **Terminal → New Terminal**
 
-## Manual usage
+**2. Start Claude**
+```
+claude
+```
 
-If you found this repo directly, you can also start a Codespace yourself:
+**3. Log in**
+Choose **option 1** (Claude account with subscription). A browser tab opens — sign in with your claude.ai account and come back.
 
-1. Click the green **Code** button → **Codespaces** → **Create codespace on main**
-2. Wait ~60 seconds for setup
-3. In the terminal, type `claude` to begin
+> You need a paid Claude plan (Pro or higher). Get one at [claude.ai/upgrade](https://claude.ai/upgrade).
 
-You'll need a paid Anthropic account (Pro / Max / Team / Enterprise / API credits) for Claude Code itself.
+**4. Start building**
+Type what you want in plain English at the `>` prompt:
+```
+> Build a simple webpage that says Hello World
+> Write a Python script that adds up a column in a CSV file
+```
+Claude writes the code, creates the files, and explains what it did.
+
+**5. Find your files**
+Everything Claude creates appears in the **left sidebar**. Click any file to open it.
+
+**6. Run your code**
+Claude usually runs it automatically. If not:
+- Python: `python3 filename.py`
+- JavaScript: `node filename.js`
+- Web page: open the `.html` file and click the preview icon
+
+---
+
+## Good to know
+
+- Your files save automatically to your GitHub account
+- The workspace sleeps after 30 min of inactivity — your files are never lost
+- Come back anytime at [github.com/codespaces](https://github.com/codespaces)
+- To stop Claude: `Ctrl + C`
+
+---
+
+*Powered by [Claude Launcher](https://claude-code-launcher.pages.dev) · GitHub Codespaces · Anthropic Claude*
