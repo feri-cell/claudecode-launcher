@@ -23,8 +23,8 @@ v7 outreach dashboard (column names locked in brief §6).
 | Phase | State |
 |---|---|
 | 0 — Scaffold (venv, schema, config, fixtures, tests) | ✅ done |
-| 1 — Discovery (EFTS) | ⬜ next |
-| 2 — Company enrichment | ⬜ |
+| 1 — Discovery (EFTS) | ✅ done |
+| 2 — Company enrichment | ⬜ next |
 | 3 — Officer extraction | ⬜ |
 | 4 — Email finding | ⬜ |
 | 5 — Orchestration, CSV export, schedule | ⬜ |
