@@ -24,8 +24,8 @@ v7 outreach dashboard (column names locked in brief §6).
 |---|---|
 | 0 — Scaffold (venv, schema, config, fixtures, tests) | ✅ done |
 | 1 — Discovery (EFTS) | ✅ done |
-| 2 — Company enrichment | ⬜ next |
-| 3 — Officer extraction | ⬜ |
+| 2 — Company enrichment | ✅ done |
+| 3 — Officer extraction | ⬜ next |
 | 4 — Email finding | ⬜ |
 | 5 — Orchestration, CSV export, schedule | ⬜ |
 

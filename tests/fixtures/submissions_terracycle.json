@@ -1,0 +1,41 @@
+{
+ "cik": "0001714781",
+ "name": "TerraCycle US Inc.",
+ "sic": "4953",
+ "sicDescription": "Refuse Systems",
+ "stateOfIncorporation": "DE",
+ "stateOfIncorporationDescription": "DE",
+ "website": "",
+ "investorWebsite": "",
+ "phone": "6096565100",
+ "addresses": {
+  "mailing": {
+   "street1": "121 NEW YORK AVENUE",
+   "street2": null,
+   "city": "TRENTON",
+   "stateOrCountry": "NJ",
+   "zipCode": "08638",
+   "stateOrCountryDescription": "NJ",
+   "isForeignLocation": 0,
+   "foreignStateTerritory": null,
+   "country": null,
+   "countryCode": null
+  },
+  "business": {
+   "street1": "121 NEW YORK AVENUE",
+   "street2": null,
+   "city": "TRENTON",
+   "stateOrCountry": "NJ",
+   "zipCode": "08638",
+   "stateOrCountryDescription": "NJ",
+   "isForeignLocation": null,
+   "foreignStateTerritory": null,
+   "country": null,
+   "countryCode": null
+  }
+ },
+ "formerNames": [],
+ "tickers": [],
+ "exchanges": [],
+ "entityType": "other"
+}
