@@ -1,0 +1,23 @@
+<!--
+  Minimal Reg A+ (Form 1-A) excerpt with the Item 10 management table and a
+  signature block. Exercises the HTML officer parser: a real person row plus a
+  decoy row ("Delaware") that must be rejected as a false positive.
+-->
+<html>
+<head><title>OFFERING CIRCULAR — Acme Robotics Inc.</title></head>
+<body>
+  <h2>Item 10. Directors, Executive Officers and Significant Employees</h2>
+  <table>
+    <tr><th>Name</th><th>Age</th><th>Position</th></tr>
+    <tr><td>Maria Gonzalez</td><td>54</td><td>Chief Executive Officer</td></tr>
+    <tr><td>David Okafor</td><td>47</td><td>Chief Financial Officer</td></tr>
+    <tr><td>Delaware</td><td>&nbsp;</td><td>State of Incorporation</td></tr>
+  </table>
+
+  <h2>Signatures</h2>
+  <p>Pursuant to the requirements of Regulation A, the issuer has duly caused
+     this Offering Statement to be signed on its behalf.</p>
+  <p>/s/ Maria Gonzalez, Chief Executive Officer</p>
+  <p>/s/ Priya Nair, Director</p>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Pipeline data (regenerated; never commit the SQLite db or exported CSV)
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Local env
+.env

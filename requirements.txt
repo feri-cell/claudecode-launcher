@@ -1,0 +1,16 @@
+# MSC EDGAR Custom Enrichment System — runtime dependencies
+# Free/public SEC data pipeline. No contact-data vendor SDKs (Hunter/Apollo/etc.) by design.
+
+httpx[http2]==0.27.2        # async HTTP/2 client for SEC endpoints
+aiosqlite==0.20.0           # async SQLite for the pipeline workers
+lxml==5.3.0                 # Form D XML parsing (namespace-tolerant XPath)
+beautifulsoup4==4.12.3      # HTML officer-table parsing (1-A / S-1 / F-series)
+tenacity==9.0.0             # retry/backoff for flaky SEC requests
+python-dateutil==2.9.0.post0
+dnspython==2.7.0            # MX lookups for email verification (Phase 4)
+fastapi==0.115.6            # monitoring UI + export endpoint (Phase 5)
+uvicorn[standard]==0.34.0   # ASGI server for the monitor
+
+# --- dev / test ---
+pytest==8.3.4
+pytest-asyncio==0.25.0

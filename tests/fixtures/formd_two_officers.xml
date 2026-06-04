@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Minimal but schema-faithful Form D primary_doc.xml with TWO DISTINCT related
+  persons. Used to prove the officer parser scopes its XPath to each person node
+  (relative `.//*[local-name()=...]`) and returns two distinct names rather than
+  duplicating the first person N times. A default namespace is declared on
+  purpose so the namespace-tolerant local-name() approach is actually exercised.
+-->
+<edgarSubmission xmlns="http://www.sec.gov/edgar/thirteenffiler">
+  <primaryIssuer>
+    <cik>0001714781</cik>
+    <entityName>TerraCycle US Inc.</entityName>
+  </primaryIssuer>
+  <relatedPersonsList>
+    <relatedPersonInfo>
+      <relatedPersonName>
+        <firstName>Jane</firstName>
+        <middleName>R</middleName>
+        <lastName>Smith</lastName>
+      </relatedPersonName>
+      <relatedPersonAddress>
+        <street1>1 Main St</street1>
+        <city>Trenton</city>
+        <stateOrCountry>NJ</stateOrCountry>
+      </relatedPersonAddress>
+      <relatedPersonRelationshipList>
+        <relationship>Executive Officer</relationship>
+        <relationship>Director</relationship>
+      </relatedPersonRelationshipList>
+      <relationshipClarification>Chief Executive Officer</relationshipClarification>
+    </relatedPersonInfo>
+    <relatedPersonInfo>
+      <relatedPersonName>
+        <firstName>John</firstName>
+        <lastName>Doe</lastName>
+      </relatedPersonName>
+      <relatedPersonAddress>
+        <street1>1 Main St</street1>
+        <city>Trenton</city>
+        <stateOrCountry>NJ</stateOrCountry>
+      </relatedPersonAddress>
+      <relatedPersonRelationshipList>
+        <relationship>Executive Officer</relationship>
+      </relatedPersonRelationshipList>
+      <relationshipClarification>Chief Financial Officer</relationshipClarification>
+    </relatedPersonInfo>
+  </relatedPersonsList>
+</edgarSubmission>
