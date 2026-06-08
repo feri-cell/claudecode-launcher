@@ -18,8 +18,7 @@
     {
       "binding": "DB",
       "database_name": "msc-edgar",
-      // Replace after `wrangler d1 create msc-edgar` (printed on creation).
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+      "database_id": "6a8c8a07-27cc-4744-9657-4b9d5c1af68e"
     }
   ],
 
