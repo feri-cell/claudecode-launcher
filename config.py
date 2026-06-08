@@ -4,8 +4,26 @@ Every value the pipeline tunes lives here so a single file documents the whole
 system's behaviour. See MSC_EDGAR_Enrichment_Brief.md §8 for rationale.
 """
 
+import os
 from datetime import date
 from pathlib import Path
+
+
+def _load_dotenv() -> None:
+    """Minimal .env loader (KEY=VALUE per line). Avoids a hard dependency and
+    keeps secrets out of the repo — .env is git-ignored. Real env vars win."""
+    env = Path(__file__).resolve().parent / ".env"
+    if not env.exists():
+        return
+    for line in env.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
 
 # --------------------------------------------------------------------------- #
 # Paths
@@ -101,3 +119,14 @@ SMTP_SLEEP_BETWEEN_PROBES = 7    # seconds
 # "none" = generate guesses only, no live verification (safe default in cloud
 # environments where outbound port 25 is blocked). "paid" reserved for Phase 4 Option B.
 EMAIL_VERIFIER = "none"
+
+# --------------------------------------------------------------------------- #
+# Optional LLM augmentation (OpenAI) — never required; pipeline degrades to
+# pure heuristics when no key is present. Used for: officer extraction from
+# messy HTML (Layer 3) and company domain resolution (Layer 4a). An LLM CANNOT
+# verify email deliverability — that stays with SMTP / a paid verifier.
+# --------------------------------------------------------------------------- #
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")  # cheap, capable
+OPENAI_MAX_HTML_CHARS = 60_000   # truncate huge filings before sending
+OPENAI_TIMEOUT = 40              # seconds per call

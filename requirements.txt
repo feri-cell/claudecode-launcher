@@ -10,6 +10,7 @@ python-dateutil==2.9.0.post0
 dnspython==2.7.0            # MX lookups for email verification (Phase 4)
 fastapi==0.115.6            # monitoring UI + export endpoint (Phase 5)
 uvicorn[standard]==0.34.0   # ASGI server for the monitor
+openai==1.59.6              # OPTIONAL LLM augmentation (officer extraction, domain resolution)
 
 # --- dev / test ---
 pytest==8.3.4
