@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MSC EDGAR — Enrichment</title>
+<style>
+  :root { --bg:#0b0f17; --panel:#141b2a; --line:#243049; --fg:#e6ecf7; --mut:#8aa0c4;
+          --accent:#3da9fc; --ok:#36d399; --warn:#fbbf24; --bad:#f87171; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+         background:var(--bg); color:var(--fg); }
+  header { padding:20px 24px; border-bottom:1px solid var(--line); display:flex;
+           align-items:center; gap:16px; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; font-weight:650; }
+  .sub { color:var(--mut); font-size:12.5px; }
+  main { padding:24px; max-width:1100px; margin:0 auto; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  select, button { font:inherit; border-radius:8px; border:1px solid var(--line);
+                   background:var(--panel); color:var(--fg); padding:9px 14px; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#021018;
+                   font-weight:650; cursor:pointer; }
+  button.ghost { cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .pill { font-size:12px; padding:3px 10px; border-radius:999px; border:1px solid var(--line);
+          color:var(--mut); }
+  .pill.live { color:var(--ok); border-color:var(--ok); }
+  .pill.paused { color:var(--warn); border-color:var(--warn); }
+  .stages { display:grid; gap:14px; margin:22px 0; }
+  .stage { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .stage .top { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
+  .stage .name { font-weight:600; }
+  .stage .meta { color:var(--mut); font-size:12.5px; font-variant-numeric:tabular-nums; }
+  .bar { height:10px; border-radius:6px; background:#0d1320; overflow:hidden; }
+  .bar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,var(--accent),#7cc4ff);
+             transition:width .4s ease; }
+  .bar.ok > i { background:linear-gradient(90deg,var(--ok),#7ef0c2); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin:8px 0 0; }
+  .kpi { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .kpi b { font-size:20px; font-variant-numeric:tabular-nums; }
+  .kpi span { display:block; color:var(--mut); font-size:12px; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--mut); font-weight:600; position:sticky; top:0; background:var(--bg); }
+  .tablewrap { max-height:460px; overflow:auto; border:1px solid var(--line); border-radius:12px; margin-top:8px; }
+  a { color:var(--accent); }
+  .muted { color:var(--mut); }
+  .sectitle { display:flex; justify-content:space-between; align-items:center; margin:26px 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MSC EDGAR <span class="sub">— SEC enrichment, no Hunter.io</span></h1>
+  <span id="status" class="pill">idle</span>
+  <span id="ticker" class="sub"></span>
+</header>
+
+<main>
+  <div class="row">
+    <label class="muted" for="reg">Regulation</label>
+    <select id="reg">
+      <option value="ALL">All (A+, D, S, 144A)</option>
+      <option value="D">Reg D</option>
+      <option value="A+">Reg A+</option>
+      <option value="S">Reg S (F-series)</option>
+      <option value="144A">Rule 144A</option>
+    </select>
+    <button id="enrich" class="primary">Enrich from EDGAR</button>
+    <button id="stop" class="ghost">Pause</button>
+    <a id="csv" class="ghost" href="/api/export.csv"><button class="ghost">Download CSV</button></a>
+  </div>
+
+  <div class="stages" id="stages">
+    <div class="stage" data-k="discovery">
+      <div class="top"><span class="name">1 · Discovery <span class="muted">(EFTS → filings)</span></span><span class="meta"></span></div>
+      <div class="bar"><i></i></div>
+    </div>
+    <div class="stage" data-k="companies">
+      <div class="top"><span class="name">2 · Company enrichment <span class="muted">(submissions JSON)</span></span><span class="meta"></span></div>
+      <div class="bar"><i></i></div>
+    </div>
+    <div class="stage" data-k="officers">
+      <div class="top"><span class="name">3 · Officer extraction <span class="muted">(Form D XML + filing HTML)</span></span><span class="meta"></span></div>
+      <div class="bar"><i></i></div>
+    </div>
+  </div>
+
+  <div class="grid" id="kpis"></div>
+
+  <div class="sectitle">
+    <h1 style="font-size:15px;">Contacts <span class="sub" id="ccount"></span></h1>
+    <span class="muted" id="hint">top-3 decision-makers per company</span>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th>Company</th><th>Name</th><th>Role</th><th>Reg</th><th>Form</th><th>Filed</th><th>Website</th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="7" class="muted">No contacts yet — click “Enrich from EDGAR”.</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const fmt = (n) => (n ?? 0).toLocaleString();
+let polling = false;
+
+function pct(done, total) { return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0; }
+
+function setStage(k, done, total, label, complete) {
+  const el = document.querySelector(`.stage[data-k="${k}"]`);
+  const p = pct(done, total);
+  el.querySelector(".bar").classList.toggle("ok", complete && total > 0);
+  el.querySelector(".bar > i").style.width = (total > 0 ? p : 0) + "%";
+  el.querySelector(".meta").textContent = label;
+}
+
+async function refresh() {
+  let p;
+  try { p = await (await fetch("/api/progress")).json(); } catch { return; }
+
+  const st = $("#status");
+  st.className = "pill" + (p.paused ? " paused" : p.active ? " live" : "");
+  st.textContent = p.paused ? "paused" : p.active ? "crawling…" : (p.discovery.total ? "idle (caught up)" : "idle");
+  $("#ticker").textContent = p.last_tick_at ? "last tick " + new Date(p.last_tick_at).toLocaleTimeString() : "";
+
+  setStage("discovery", p.discovery.done, p.discovery.total,
+           `${fmt(p.discovery.done)} / ${fmt(p.discovery.total)} windows · ${fmt(p.filings.total)} filings`,
+           p.discovery.total > 0 && p.discovery.done >= p.discovery.total);
+  const compDone = p.companies.enriched, compTot = p.companies.total;
+  setStage("companies", compDone, compTot,
+           `${fmt(compDone)} / ${fmt(compTot)} enriched · ${fmt(p.companies.with_website)} w/ website`,
+           compTot > 0 && compDone >= compTot);
+  const offDone = p.filings.parsed + p.filings.incomplete, offTot = p.filings.total;
+  setStage("officers", offDone, offTot,
+           `${fmt(p.filings.parsed)} parsed · ${fmt(p.filings.incomplete)} empty · ${fmt(p.officers.total)} officers`,
+           offTot > 0 && offDone >= offTot);
+
+  $("#kpis").innerHTML = [
+    ["Filings", p.filings.total], ["Companies", p.companies.total],
+    ["Enriched", p.companies.enriched], ["Officers", p.officers.total],
+    ["Top-3 contacts", p.officers.top3],
+  ].map(([k, v]) => `<div class="kpi"><b>${fmt(v)}</b><span>${k}</span></div>`).join("");
+
+  if (p.officers.top3 > 0) loadContacts();
+}
+
+async function loadContacts() {
+  let d;
+  try { d = await (await fetch("/api/contacts?limit=200")).json(); } catch { return; }
+  $("#ccount").textContent = d.count ? `(${fmt(d.count)} shown)` : "";
+  if (!d.contacts.length) return;
+  $("#rows").innerHTML = d.contacts.map((c) => `
+    <tr>
+      <td>${esc(c.company)}</td>
+      <td>${esc([c.first, c.last].filter(Boolean).join(" "))}</td>
+      <td>${esc(c.role)}</td>
+      <td>${esc(c.regulation)}</td>
+      <td>${esc(c.form_type)}</td>
+      <td class="muted">${esc(c.filing_date)}</td>
+      <td>${c.website ? `<a href="${esc(c.website)}" target="_blank" rel="noopener">site</a>` : '<span class="muted">—</span>'}</td>
+    </tr>`).join("");
+}
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g, (m)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+
+$("#enrich").addEventListener("click", async () => {
+  const reg = $("#reg").value;
+  $("#enrich").disabled = true;
+  try {
+    await fetch("/api/enrich", { method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({ regs: reg === "ALL" ? ["ALL"] : [reg] }) });
+  } finally { $("#enrich").disabled = false; }
+  refresh();
+});
+$("#stop").addEventListener("click", async () => { await fetch("/api/stop", { method:"POST" }); refresh(); });
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

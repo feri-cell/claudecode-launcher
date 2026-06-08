@@ -1,0 +1,43 @@
+{
+  // MSC EDGAR enrichment Worker.
+  //   • serves the HTML UI (public/) as static assets
+  //   • /api/* endpoints drive the crawl + report progress
+  //   • a 1-minute Cron Trigger advances the backfill in bounded, resumable ticks
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "msc-edgar",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-15",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "msc-edgar",
+      // Replace after `wrangler d1 create msc-edgar` (printed on creation).
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ],
+
+  "triggers": {
+    // Every minute. Each tick is internally rate-limited and request-budgeted,
+    // so this paces a multi-day backfill without tripping EDGAR limits.
+    "crons": ["* * * * *"]
+  },
+
+  "vars": {
+    // SEC requires a real contact in the User-Agent.
+    "USER_AGENT": "Manhattan Street Capital feri@manhattanstreetcapital.com",
+    // Max EDGAR fetches per cron tick. Free plan caps subrequests at 50/invocation,
+    // so keep <=45 on free; raise to a few hundred on Workers Paid for a faster backfill.
+    "MAX_REQUESTS_PER_TICK": "40",
+    // Target requests/second to EDGAR (ceiling is 10/s per UA; we stay at 5).
+    "REQUESTS_PER_SECOND": "5"
+  },
+
+  "observability": { "enabled": true }
+}
