@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS disco_windows (
     status       TEXT DEFAULT 'pending',        -- pending | done | error
     attempts     INTEGER DEFAULT 0,             -- consecutive failed query attempts
     last_error   TEXT,
+    kind         TEXT DEFAULT 'backfill',       -- 'backfill' (historical) | 'incremental' (new filings)
     UNIQUE(regulation, form_type, start_date, end_date)
 );
 CREATE INDEX IF NOT EXISTS idx_disco_status ON disco_windows(status);

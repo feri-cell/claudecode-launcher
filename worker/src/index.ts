@@ -13,6 +13,8 @@ export interface Env {
   EMAIL_PER_TICK?: string;     // companies to email-enrich per tick (default 3)
   EMAIL_SCRAPE_PAGES?: string; // site pages to scrape per company (default 3)
   VERIFY_TOKEN?: string;       // shared secret for the external SMTP verifier (wrangler secret)
+  INCREMENTAL_HOURS?: string;        // cadence for new-filings re-discovery (default 12)
+  INCREMENTAL_OVERLAP_DAYS?: string; // lookback window for the incremental pass (default 10)
 }
 
 // Allowed verdicts the external SMTP verifier may write back.
@@ -64,8 +66,9 @@ export default {
       if (path === "/api/progress") return json(await progress(env));
 
       // GET /api/contacts?limit=100 — enriched top-3 contacts for the results table.
+      // The dashboard pulls the full set as JSON (no CSV), so allow a large cap.
       if (path === "/api/contacts") {
-        const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit")) || 100));
+        const limit = Math.min(100000, Math.max(1, Number(url.searchParams.get("limit")) || 100));
         return json(await contacts(env, limit));
       }
 

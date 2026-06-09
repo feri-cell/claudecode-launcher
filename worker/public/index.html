@@ -410,7 +410,7 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
 
   </nav>
   <div class="sb-stat" id="sb-stat">
-    <b id="sb-ct">No data</b><br>Import EDGAR CSV to begin
+    <b id="sb-ct">No data</b><br>Start the EDGAR crawl to begin
   </div>
   <div class="sb-foot">
     <div class="sf-av">JD</div>
@@ -438,7 +438,7 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
   <div id="onboard">
     <div class="import-hero">
       <div class="ih-title">📡 Pull Live EDGAR Filings</div>
-      <div class="ih-sub">This dashboard is wired straight to the MSC EDGAR enrichment Worker — no Python script, no manual CSV. Pick the regulations, start the crawl, and contacts (names, roles, websites, and pattern-guessed / scraped emails) stream in automatically. Importing a CSV still works as a fallback.</div>
+      <div class="ih-sub">This dashboard is wired straight to the MSC EDGAR enrichment Worker — no Python script, no manual import. Pick the regulations, start the crawl, and contacts (names, roles, websites, and pattern-guessed / scraped emails) stream in automatically. The first run does a full historical backfill; after that only new filings are pulled in.</div>
       <div class="import-steps">
         <div class="is-card"><div class="is-num">1</div><div class="is-title">Pick Regulations</div><div class="is-body">Choose <strong style="color:#fff;">Reg A+ / D / S / 144A</strong> (or all). The Worker discovers every matching filing on SEC EDGAR since each form's start year.</div></div>
         <div class="is-card"><div class="is-num">2</div><div class="is-title">Start the Crawl</div><div class="is-body">A 1-minute cron advances discovery → company → officers → <strong style="color:#fff;">email finding</strong> in resumable, rate-limited ticks. Watch live progress.</div></div>
@@ -596,7 +596,7 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
       <label class="msc-chk"><input type="checkbox" value="144A"> Rule 144A</label>
       <span style="flex:1;"></span>
       <label class="msc-chk" title="Refresh the Filings/Contacts table automatically as new contacts arrive"><input type="checkbox" id="msc-auto" checked> Auto-load into table</label>
-      <button class="btn btn-ghost btn-xs" id="msc-load" onclick="mscLoadCsv(false)">↓ Load contacts now</button>
+      <button class="btn btn-ghost btn-xs" id="msc-load" onclick="mscLoadContacts(false)">↓ Load contacts now</button>
     </div>
   </div>
 
@@ -805,23 +805,6 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
     <div class="prog-msg" id="prog-msg">Reading file…</div>
     <div class="prog-track"><div class="prog-fill" id="prog-fill"></div></div>
     <div class="prog-pct" id="prog-pct">0%</div>
-  </div>
-</div>
-
-<!-- SCRIPT MODAL -->
-<div class="overlay" id="ov-script" onclick="mayClose('ov-script',event)">
-  <div class="modal modal-wide">
-    <div class="modal-hd"><div class="modal-title">📄 Python Script — Fetch EDGAR Filings</div><button class="modal-x" onclick="closeOv('ov-script')">✕</button></div>
-    <div class="modal-bd">
-      <p style="font-size:12px;color:var(--t2);margin-bottom:8px;">Run this script with Python 3 — it fetches all Reg A+, D, S, and 144A filings from EDGAR (2015–today) and saves <code>edgar_filings.csv</code> in your Downloads folder.</p>
-      <div class="script-box" id="script-box"></div>
-      <div style="display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;">
-        <button class="btn btn-primary" onclick="cpScript()">📋 Copy Script</button>
-        <button class="btn btn-ghost" onclick="dlScript()">⬇ Download .py</button>
-        <a href="https://colab.research.google.com/notebook#create=true" target="_blank" class="btn btn-ghost">Open Colab →</a>
-        <button class="btn btn-ghost" style="margin-left:auto;" onclick="closeOv('ov-script')">Close</button>
-      </div>
-    </div>
   </div>
 </div>
 
@@ -1034,7 +1017,7 @@ function restoreState(){
     const s = JSON.parse(raw);
     if(Array.isArray(s.lists)) DB.lists = s.lists;
     if(s.activeListId) activeListId = s.activeListId;
-    // Stash the per-contact user layer; merged into DB.contacts during parseChunked.
+    // Stash the per-contact user layer; merged into DB.contacts during parseContacts.
     window._savedContacts = {};
     for(const k in (s.contacts||{})){
       const c = s.contacts[k];
@@ -1075,99 +1058,6 @@ function contactInList(c, lid){
 }
 
 
-const PYTHON_SCRIPT = `#!/usr/bin/env python3
-"""
-Manhattan Street Capital — EDGAR Full Fetcher
-Fetches Reg A+, Reg D, Reg S, Rule 144A filings
-year-by-year (avoids HTTP 500 limit).
-pip3 install requests
-python3 edgar_fetch.py
-"""
-import requests, csv, time
-from datetime import datetime
-
-HEADERS  = {'User-Agent':'MSC-Outreach james@manhattanstreetcapital.com','Accept':'application/json'}
-EFTS_URL = 'https://efts.sec.gov/LATEST/search-index'
-OUTPUT   = 'edgar_filings.csv'
-START    = 2015
-END      = datetime.today().year
-QUAL     = {'253G1','253G2','253G3','253G4'}
-
-GROUPS = [
-  {'reg':'A+',  'forms':'1-A,1-A/A,253G1,253G2,253G3,253G4','label':'Regulation A+'},
-  {'reg':'D',   'forms':'D,D/A',                             'label':'Regulation D'},
-  {'reg':'S',   'forms':'S-1,F-1',                           'label':'Regulation S'},
-  {'reg':'144A','forms':'S-3,F-3',                           'label':'Rule 144A'},
-]
-
-def name(src):
-    e = (src.get('entity_name') or '').strip()
-    if not e:
-        dn = src.get('display_names')
-        if dn and isinstance(dn, list):
-            f = dn[0]
-            e = (f.get('name','') if isinstance(f,dict) else str(f)).strip()
-    return e or 'Unknown'
-
-def fetch_year(reg, forms, year):
-    rows, fi = [], 0
-    for attempt in range(3):
-        while True:
-            try:
-                r = requests.get(EFTS_URL,
-                    params={'forms':forms,'dateRange':'custom',
-                            'startdt':f'{year}-01-01','enddt':f'{year}-12-31',
-                            'from':fi,'size':100},
-                    headers=HEADERS, timeout=30)
-            except: break
-            if r.status_code != 200: break
-            d = r.json()
-            hits = d.get('hits',{}).get('hits',[])
-            tot  = d.get('hits',{}).get('total',{}).get('value',0)
-            if not hits: break
-            for h in hits:
-                s = h.get('_source',{})
-                cik = h.get('_id','').split(':')[0].zfill(10)
-                ft  = (s.get('form_type') or forms.split(',')[0]).strip()
-                fd  = (s.get('file_date') or s.get('period_of_report',''))[:10]
-                st  = ('qualified' if ft in QUAL else 'filed') if reg=='A+' else 'active'
-                rows.append({'Regulation':reg,'Form Type':ft,'Company Name':name(s),
-                  'CIK':cik,'Filing Date':fd,'Year':year,'Status':st,
-                  'Contact Name':'','Role':'CEO/Founder','Email':'',
-                  'EDGAR URL':f'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=&dateb=&owner=include&count=40&search_text=',
-                  'List Status':'','Source':'edgar'})
-            fi += 100
-            if fi >= tot: break
-            time.sleep(0.12)
-        if rows: break
-        time.sleep(2)
-    return rows
-
-def main():
-    print('='*52); print('  MSC EDGAR Fetcher'); print(f'  {START} → {END}'); print('='*52)
-    all_rows, seen = [], set()
-    for g in GROUPS:
-        tot = 0
-        print(f'\\n  [{g["label"]}]')
-        for yr in range(START, END+1):
-            rows = fetch_year(g['reg'], g['forms'], yr)
-            for row in rows:
-                k = (row['CIK'], row['Filing Date'], row['Regulation'])
-                if k not in seen:
-                    seen.add(k); all_rows.append(row); tot += 1
-            print(f'    {yr}: {tot} total', end='\\r', flush=True)
-            time.sleep(0.3)
-        print(f'    Done — {tot} {g["label"]} filings')
-    if not all_rows:
-        print('No data fetched.'); return
-    with open(OUTPUT,'w',newline='',encoding='utf-8') as f:
-        w = csv.DictWriter(f, fieldnames=all_rows[0].keys())
-        w.writeheader(); w.writerows(all_rows)
-    print(f'\\n  SUCCESS — {len(all_rows):,} filings saved to {OUTPUT}')
-    print('  Import into MSC Outreach Platform → Import CSV\\n')
-
-if __name__ == '__main__': main()
-`;
 
 /* ══════════════════════
    UTILS
@@ -1214,65 +1104,29 @@ function buildYears(){
 }
 
 /* ══════════════════════════════════════
-   CSV IMPORT — Streaming chunked parser
-   Never blocks UI. 2000 rows per chunk.
+   CONTACTS LOADER — JSON from the Worker
+   Reads enriched contacts straight from D1 via /api/contacts (no CSV).
+   The Worker's crawl stores every EDGAR record in D1; this just renders it
+   and merges the user's list/status layer back on top.
    ══════════════════════════════════════ */
 
-function beginImport(file){
-  showProg(true,`Reading ${(file.size/1024/1024).toFixed(1)} MB…`,2);
-  const reader=new FileReader();
-  reader.onload=ev=>{
-    showProg(true,'Splitting lines…',8);
-    setTimeout(()=>parseChunked(ev.target.result),30);
-  };
-  reader.onerror=()=>toast('Could not read file','err');
-  reader.readAsText(file,'utf-8');
+const VALID_REGS = new Set(['A+','S','D','144A']);
+function normReg(r){
+  const u=(r||'').toUpperCase().replace('REGULATION ','').replace('REG ','').trim();
+  if(VALID_REGS.has(u))return u;
+  if(u.includes('A')&&u.includes('+'))return'A+';
+  if(u==='D')return'D';
+  if(u==='S')return'S';
+  if(u.includes('144'))return'144A';
+  return'A+';
 }
 
-function parseChunked(text){
-  /* Split only once, then process 2000 rows at a time via setTimeout */
-  const NL = text.indexOf('\r\n') > -1 ? '\r\n' : '\n';
-  let pos = text.indexOf(NL);
-  if(pos<0){toast('Empty CSV','err');showProg(false);return;}
-  const headerLine = text.slice(0,pos);
-  const headers    = splitCSVLine(headerLine).map(h=>h.toLowerCase().trim());
-
-  /* Column map */
-  const ci = (...names) => { for(const n of names){const i=headers.indexOf(n);if(i>=0)return i;} return -1; };
-  const COL = {
-    co:      ci('company name','company','entity name','issuer'),
-    cik:     ci('cik','central index key'),
-    reg:     ci('regulation','reg'),
-    tier:    ci('form type','tier','form'),
-    filed:   ci('filing date','filed','date'),
-    year:    ci('year'),
-    stat:    ci('status'),
-    fname:   ci('first name','contact name','name','contact'),
-    lname:   ci('last name'),
-    role:    ci('role','title'),
-    email:   ci('email','email address'),
-    gemail:  ci('guessed email','guessed_email'),
-    estat:   ci('email status','email_status'),   // Verified | Probable | Guessed
-    eu:      ci('edgar url','edgar_url'),
-    src:     ci('source'),
-  };
-
-  const VALID = new Set(['A+','S','D','144A']);
-  function normReg(r){
-    const u=r.toUpperCase().replace('REGULATION ','').replace('REG ','').trim();
-    if(VALID.has(u))return u;
-    if(u.includes('A')&&u.includes('+'))return'A+';
-    if(u==='D')return'D';
-    if(u==='S')return'S';
-    if(u.includes('144'))return'144A';
-    return'A+';
-  }
-
-  /* Preserve existing contact data across re-import — including the persisted
-     user layer (list membership, statuses, manual edits) from localStorage. */
+/* Build the in-memory DB from /api/contacts rows. Mirrors the old CSV parser's
+   output shape (DB.rows / DB.contacts / DB.stats) and preserves the persisted
+   user layer (list membership, statuses, manual edits) from localStorage. */
+function parseContacts(rows){
   const prevContacts = {...(window._savedContacts||{}), ...DB.contacts};
 
-  /* Reset DB */
   DB.rows   = [];
   DB.contacts = {};
   DB.stats  = {byReg:{'A+':0,'S':0,'D':0,'144A':0},byYear:{},qualified:0,newWeek:0,total:0};
@@ -1281,121 +1135,68 @@ function parseChunked(text){
 
   const seen    = new Set();
   const weekAgo = Date.now() - 7*86400000;
-  const CHUNK   = 2000;
-  let lineStart = pos + NL.length;
-  let rowsProcessed = 0;
-  const totalLen = text.length;
 
-  function processChunk(){
-    let count = 0;
-    while(count < CHUNK && lineStart < totalLen){
-      let lineEnd = text.indexOf(NL, lineStart);
-      if(lineEnd < 0) lineEnd = totalLen;
-      const line = text.slice(lineStart, lineEnd);
-      lineStart = lineEnd + NL.length;
-      if(!line.trim()){continue;}
+  for(const r of (rows||[])){
+    const co = (r.company||'').trim();
+    if(!co) continue;
 
-      const cols = splitCSVLine(line);
-      const g = (i,fb='') => i>=0&&i<cols.length ? cols[i].replace(/^"|"$/g,'').trim() : fb;
+    // CIK → zero-padded 10-digit (keep raw if it doesn't parse).
+    let cik = String(r.cik ?? '').replace(/\D/g,'');
+    cik = cik ? cik.padStart(10,'0').slice(-10) : String(r.cik ?? '');
+    if(!cik || cik==='0000000000') cik = String(r.cik ?? '');
 
-      const co = g(COL.co);
-      if(!co) continue;
+    const reg    = normReg(String(r.regulation||'A+'));
+    const tier   = r.form_type || '—';
+    const filed  = String(r.filing_date||'').slice(0,10);
+    const yr     = filed ? (parseInt(filed.slice(0,4))||0) : 0;
+    // The contacts feed carries no qualification status column.
+    const status = 'active';
+    const fname  = r.first || '';
+    const lname  = r.last  || '';
+    const role   = r.role  || 'CEO/Founder';
+    const email  = r.email || '';            // verified address (scraped/SMTP 250)
+    const gemail = r.guessed_email || '';     // best probable/guessed address
+    const estat  = (r.email_status||'').toLowerCase(); // verified|probable|guessed
+    const eu     = cik
+      ? 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK='+cik+'&type=&dateb=&owner=include&count=40'
+      : '';
+    const src    = r.source_type || 'edgar';
 
-      const cikRaw = g(COL.cik);
-      // CIK is a pure number ≤10 digits.
-      // Accession numbers look like "0001234567-24-001234" — extract first segment only.
-      let cik = '';
-      if(cikRaw.includes('-')){
-        // Accession number format: first dash-segment is the CIK
-        const firstSeg = cikRaw.split('-')[0].replace(/\D/g,'');
-        cik = firstSeg.padStart(10,'0').slice(-10);
-      } else {
-        cik = cikRaw.replace(/\D/g,'').padStart(10,'0').slice(-10);
-      }
-      if(!cik || cik==='0000000000') cik = cikRaw; // keep raw if parsing failed
-      const regRaw = g(COL.reg,'A+');
-      const reg    = normReg(regRaw);
-      const tier   = g(COL.tier,'—');
-      const filed  = g(COL.filed,'').slice(0,10);
-      const yr     = parseInt(g(COL.year)) || (filed?parseInt(filed.slice(0,4)):0) || 0;
-      const statR  = g(COL.stat,'active').toLowerCase();
-      const status = reg==='A+'&&statR==='qualified'?'qualified':statR==='withdrawn'?'withdrawn':'active';
-      const fname  = g(COL.fname,'');
-      const lname  = g(COL.lname,'');
-      const role   = g(COL.role,'CEO/Founder');
-      const email  = g(COL.email,'');
-      const eu     = g(COL.eu,'');
-      const src    = g(COL.src,'edgar');
+    const dedup = cik+'|'+reg+'|'+filed;
+    if(seen.has(dedup)) continue;
+    seen.add(dedup);
 
-      const dedup = cik+'|'+reg+'|'+filed;
-      if(seen.has(dedup)) continue;
-      seen.add(dedup);
+    DB.rows.push({co,cik,reg,tier,filed,year:yr,status,src,eu});
 
-      /* Compact row */
-      DB.rows.push({co,cik,reg,tier,filed,year:yr,status,src,eu});
+    const k      = ck_key(cik,reg);
+    const prev   = prevContacts[k] || {};
+    const realEmail = prev.email || email;
+    const bestEmail = realEmail || gemail;
+    // A user-confirmed (prev) or scraped email is 'verified'; otherwise inherit
+    // the Worker's grade for the guessed address.
+    const emailTier = realEmail ? 'verified' : (estat || (gemail ? 'guessed' : ''));
+    DB.contacts[k] = {
+      first: prev.first || fname,
+      last:  prev.last  || lname,
+      role:  prev.role  || role,
+      email: bestEmail,
+      email_verified: emailTier==='verified',
+      email_tier:     emailTier,       // verified | probable | guessed | ''
+      guessed_email:  gemail,
+      list_status:   prev.list_status   || null,
+      added_to_list: prev.added_to_list || null,
+      last_emailed:  prev.last_emailed  || null,
+      seq_num:       prev.seq_num       || 0,
+      list_ids:      prev.list_ids ? (prev.list_ids instanceof Set ? prev.list_ids : new Set(prev.list_ids)) : new Set(),
+      src: src==='msc'?'msc':'edgar',
+    };
 
-      /* Contact data */
-      const k      = ck_key(cik,reg);
-      const prev   = prevContacts[k] || {};
-      const gemail = g(COL.gemail,'');             // best guessed/probable address
-      const estat  = (g(COL.estat,'')||'').toLowerCase();  // verified|probable|guessed
-      const realEmail = prev.email || email;
-      const bestEmail = realEmail || gemail;
-      // Tier the contact: a user-confirmed (prev) or scraped email is 'verified';
-      // otherwise inherit the Worker's grade for the guessed address.
-      const emailTier = realEmail ? 'verified' : (estat || (gemail ? 'guessed' : ''));
-      DB.contacts[k] = {
-        first: prev.first || fname,
-        last:  prev.last  || lname,
-        role:  prev.role  || role,
-        email: bestEmail,
-        email_verified: emailTier==='verified',
-        email_tier:     emailTier,       // verified | probable | guessed | ''
-        guessed_email:  gemail,
-        list_status:   prev.list_status   || null,
-        added_to_list: prev.added_to_list || null,
-        last_emailed:  prev.last_emailed  || null,
-        seq_num:       prev.seq_num       || 0,
-        list_ids:      prev.list_ids ? (prev.list_ids instanceof Set ? prev.list_ids : new Set(prev.list_ids)) : new Set(),
-        src: src==='msc'?'msc':'edgar',
-      };
-
-      /* Stats */
-      DB.stats.byReg[reg]  = (DB.stats.byReg[reg]||0)+1;
-      DB.stats.byYear[yr]  = (DB.stats.byYear[yr]||0)+1;
-      if(status==='qualified') DB.stats.qualified++;
-      if(filed){try{if(new Date(filed+'T00:00:00').getTime()>weekAgo)DB.stats.newWeek++;}catch(e){}}
-
-      count++;
-    }
-
-    rowsProcessed += count;
-    const pct = Math.min(95, Math.round(lineStart/totalLen*90)+5);
-    showProg(true,`Parsing… ${rowsProcessed.toLocaleString()} rows`,pct);
-
-    if(lineStart < totalLen){
-      setTimeout(processChunk,0);  /* yield — lets browser paint */
-    } else {
-      finishImport();
-    }
+    DB.stats.byReg[reg] = (DB.stats.byReg[reg]||0)+1;
+    DB.stats.byYear[yr] = (DB.stats.byYear[yr]||0)+1;
+    if(filed){try{if(new Date(filed+'T00:00:00').getTime()>weekAgo)DB.stats.newWeek++;}catch(e){}}
   }
 
-  processChunk();
-}
-
-/* Fast CSV line splitter — handles quoted fields */
-function splitCSVLine(line){
-  const cols=[]; let cur='', inQ=false;
-  for(let i=0;i<line.length;i++){
-    const ch=line[i];
-    if(ch==='"'){
-      if(inQ&&line[i+1]==='"'){cur+='"';i++;}
-      else inQ=!inQ;
-    } else if(ch===','&&!inQ){cols.push(cur);cur='';}
-    else cur+=ch;
-  }
-  cols.push(cur);
-  return cols;
+  finishImport();
 }
 
 function finishImport(){
@@ -2300,9 +2101,6 @@ function expContacts(){
 /* ══════════════════════
    SCRIPT MODAL
    ══════════════════════ */
-function openScript(){ck('script-box').textContent=PYTHON_SCRIPT.trim();openOv('ov-script');}
-function cpScript(){navigator.clipboard.writeText(PYTHON_SCRIPT.trim()).then(()=>toast('Script copied')).catch(()=>toast('Select and copy manually','err'));}
-function dlScript(){const a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(PYTHON_SCRIPT.trim());a.download='edgar_fetch.py';a.click();toast('edgar_fetch.py downloaded');}
 
 /* ══════════════════════
    MODAL HELPERS
@@ -2335,7 +2133,7 @@ refreshListDropdowns();
 </style>
 <script>
 /* ══ EDGAR Enrichment tab — drives the Worker /api/* endpoints and feeds
-      contacts into the existing CSV import pipeline (parseChunked). Progress
+      contacts into the dashboard via parseContacts (JSON from /api/contacts). Progress
       updates are text-only (no flicker); the heavy table reload happens
       silently and throttled so the user is never yanked around. ══ */
 const mscState = { timer:null, lastTop3:-1, lastLoad:0, online:false };
@@ -2436,17 +2234,17 @@ async function mscPoll(){
   try{ p = await (await mscApi('/api/progress')).json(); mscState.online=true; }
   catch(e){
     mscState.online=false;
-    mscText('en-state','⚠ EDGAR API unreachable'); mscText('en-sub','This page isn’t being served by the Worker. Import a CSV instead.'); mscText('ct-en','off');
+    mscText('en-state','⚠ EDGAR API unreachable'); mscText('en-sub','This page isn’t being served by the Worker. Open it at its *.workers.dev URL.'); mscText('ct-en','off');
     return;
   }
 
   mscRender(p);
 
   // Silently refresh the table when new contacts arrive (throttled, only on
-  // change). parseChunked preserves prior contact edits and the current page.
+  // change). parseContacts preserves prior contact edits and the current page.
   const auto = ck('msc-auto') && ck('msc-auto').checked;
   if(auto && p.officers.top3>0 && p.officers.top3!==mscState.lastTop3 && Date.now()-mscState.lastLoad>20000){
-    mscLoadCsv(true);
+    mscLoadContacts(true);
   }
   mscState.lastTop3 = p.officers.top3;
 
@@ -2456,17 +2254,18 @@ async function mscPoll(){
   if(onPage || p.active){ mscState.timer = setTimeout(mscPoll, onPage?3000:12000); }
 }
 
-async function mscLoadCsv(silent){
+async function mscLoadContacts(silent){
   try{
-    const txt = await (await mscApi('/api/export.csv')).text();
-    const firstNL = txt.indexOf('\n');
-    if(firstNL<0 || !txt.slice(firstNL+1).trim()){
+    // Pull the enriched contacts the Worker stored in D1 — JSON, not CSV.
+    const data = await (await mscApi('/api/contacts?limit=100000')).json();
+    const rows = (data && data.contacts) || [];
+    if(!rows.length){
       if(!silent) toast('No contacts yet — start the crawl first','err');
       return;
     }
     mscState.lastLoad = Date.now();
     if(silent){ window.mscSilent = true; window.mscSavedPage = (typeof DB!=='undefined') ? DB.page : 0; }
-    parseChunked(txt);                 // existing pipeline (silent-aware via window.mscSilent)
+    parseContacts(rows);               // builds DB + renders (silent-aware via window.mscSilent)
     if(!silent){ toast('Contacts loaded into dashboard'); goPage('filings'); }
   }catch(e){ if(!silent) toast('Load failed: '+e.message,'err'); }
 }
@@ -2478,7 +2277,7 @@ async function refreshData(){
   persistState();
   window.mscSavedPage = (typeof DB!=='undefined') ? DB.page : 0;
   toast('Refreshing from EDGAR…');
-  await mscLoadCsv('refresh');           // truthy → silent path (no flicker, keeps page)
+  await mscLoadContacts('refresh');           // truthy → silent path (no flicker, keeps page)
   toast('Refreshed — lists, statuses & edits kept');
 }
 
@@ -2493,7 +2292,7 @@ async function mscBoot(){
     ck('btn-edgar-live').style.display = 'inline-flex';
     const off = ck('hero-offline'); if(off) off.style.display='none';
     mscRender(p);
-    if(p.officers && p.officers.top3>0 && !dataLoaded){ mscLoadCsv(true); }
+    if(p.officers && p.officers.top3>0 && !dataLoaded){ mscLoadContacts(true); }
     if(p.active){ mscPoll(); }
   }catch(e){
     // Not served by the Worker (e.g. opened as a local file).

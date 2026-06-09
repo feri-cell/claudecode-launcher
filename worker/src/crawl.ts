@@ -58,16 +58,20 @@ async function releaseLease(env: Env): Promise<void> {
 // The first remote D1 was created before the Layer 4 columns existed. D1 has no
 // "ADD COLUMN IF NOT EXISTS", so we run each ALTER once, guarded by a version
 // flag, and swallow the "duplicate column" error on DBs that already have them.
-const SCHEMA_VERSION = "2";
-const MIGRATIONS_V2 = [
+const SCHEMA_VERSION = "3";
+const MIGRATIONS = [
+  // v2 — Layer 4 email columns.
   "ALTER TABLE companies ADD COLUMN domain TEXT",
   "ALTER TABLE companies ADD COLUMN domain_verified INTEGER DEFAULT 0",
   "ALTER TABLE companies ADD COLUMN email_status TEXT",
+  // v3 — tag discovery windows so the incremental (new-filings-only) pass can be
+  // distinguished from, and cleaned up independently of, the historical backfill.
+  "ALTER TABLE disco_windows ADD COLUMN kind TEXT DEFAULT 'backfill'",
 ];
 
 export async function migrate(env: Env): Promise<void> {
   if ((await getState(env, "schema_version")) === SCHEMA_VERSION) return;
-  for (const sql of MIGRATIONS_V2) {
+  for (const sql of MIGRATIONS) {
     try {
       await env.DB.prepare(sql).run();
     } catch (e) {
@@ -385,11 +389,69 @@ async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<nu
   return done;
 }
 
+// --- incremental re-discovery (new filings only) --------------------------- //
+// The historical backfill seeds yearly windows up to the current year; once they
+// are all 'done' the crawl would sit idle forever and never see filings that
+// arrive afterwards. This re-opens a short, recent window per active reg/form on
+// a fixed cadence so ONLY new filings get pulled in — deduped by accession in
+// persistRecords and flowed through the same officer/company/email pipeline.
+//
+// It runs only after the initial backfill has caught up (no pending 'backfill'
+// windows), so the first run stays the "one long huge fill" the user expects and
+// everything after it is a cheap delta.
+async function maybeSeedIncremental(env: Env): Promise<void> {
+  const regsCsv = await getState(env, "regs");
+  if (!regsCsv) return; // a crawl was never started
+  const regs = regsCsv.split(",").filter((r) => REGULATION_FORMS[r]);
+  if (!regs.length) return;
+
+  // Hold off while the historical backfill still has work queued.
+  const pending = await env.DB.prepare(
+    "SELECT COUNT(*) AS c FROM disco_windows WHERE status='pending' AND COALESCE(kind,'backfill')='backfill'"
+  ).first<any>();
+  if (Number(pending?.c ?? 0) > 0) return;
+
+  // Cadence gate.
+  const intervalH = Math.max(1, Number(env.INCREMENTAL_HOURS) || 12);
+  const last = await getState(env, "last_incremental_at");
+  if (last) {
+    const lastMs = new Date(last).getTime();
+    if (Number.isFinite(lastMs) && Date.now() - lastMs < intervalH * 3_600_000) return; // not due yet
+  }
+
+  const overlapDays = Math.max(1, Number(env.INCREMENTAL_OVERLAP_DAYS) || 10);
+  const today = nowIso().slice(0, 10);
+  const start = subDays(today, overlapDays);
+
+  // Replace the previous incremental windows so they never accumulate, then
+  // queue one fresh recent window per active reg/form. These spans are short, so
+  // they stay well under the EFTS cap and won't bisect into child rows.
+  const stmts: D1PreparedStatement[] = [
+    env.DB.prepare("DELETE FROM disco_windows WHERE COALESCE(kind,'backfill')='incremental'"),
+  ];
+  for (const reg of regs) {
+    for (const form of REGULATION_FORMS[reg]) {
+      stmts.push(
+        env.DB.prepare(
+          "INSERT INTO disco_windows (regulation, form_type, start_date, end_date, status, from_offset, kind) " +
+            "VALUES (?, ?, ?, ?, 'pending', 0, 'incremental') " +
+            "ON CONFLICT(regulation, form_type, start_date, end_date) " +
+            "DO UPDATE SET status='pending', from_offset=0, attempts=0, kind='incremental'"
+        ).bind(reg, form, start, today)
+      );
+    }
+  }
+  await env.DB.batch(stmts);
+  await setState(env, "last_incremental_at", nowIso());
+  await setState(env, "active", "1"); // wake the pipeline to process the new windows
+}
+
 // --- the tick -------------------------------------------------------------- //
 export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }> {
   if ((await getState(env, "paused")) === "1") return { ran: false, fetched: 0 };
   if (!(await acquireLease(env))) return { ran: false, fetched: 0 };
   await migrate(env);
+  await maybeSeedIncremental(env).catch(() => {}); // never let this abort a tick
   const maxReq = Math.max(1, Number(env.MAX_REQUESTS_PER_TICK) || 40);
   const client = new EdgarClient(env, new Budget(maxReq));
   try {
@@ -426,6 +488,11 @@ export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }>
 function addDay(d: string): string {
   const dt = new Date(d + "T00:00:00Z");
   dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10);
+}
+function subDays(d: string, n: number): string {
+  const dt = new Date(d + "T00:00:00Z");
+  dt.setUTCDate(dt.getUTCDate() - n);
   return dt.toISOString().slice(0, 10);
 }
 function midDate(start: string, end: string): string {
