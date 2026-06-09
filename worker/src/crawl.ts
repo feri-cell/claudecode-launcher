@@ -476,14 +476,22 @@ async function stepVerifyApi(env: Env, client: EdgarClient, max: number): Promis
   // Verify ONE best candidate per officer (probable preferred) so each scarce
   // daily credit cleans a distinct contact rather than burning several on the
   // same person's 8 pattern variants. Probable officers are checked before guessed.
+  // Spend the scarce daily credits on the addresses MOST LIKELY to be valid
+  // first: on-site scraped emails (real, published) → probable → guessed. SMTP-
+  // checking a scraped address upgrades it to SMTP-verified (or culls the rare
+  // dead one); checking guesses last (they mostly fail). One best per officer,
+  // operating companies first.
+  //   pri: 0 = scraped on-site (verified, not yet SMTP-checked), 1 = probable, 2 = guessed
+  const PRI = "CASE WHEN e.verification_status='verified' THEN 0 WHEN e.verification_status='probable' THEN 1 ELSE 2 END";
   const rows = (
     await env.DB.prepare(
       "SELECT id, address FROM (" +
-        "SELECT e.id AS id, e.address AS address, e.verification_status AS vs, COALESCE(c.is_operating,0) AS op, " +
-        "ROW_NUMBER() OVER (PARTITION BY e.officer_id ORDER BY (e.verification_status='probable') DESC, e.id) AS rn " +
+        `SELECT e.id AS id, e.address AS address, ${PRI} AS pri, COALESCE(c.is_operating,0) AS op, ` +
+        `ROW_NUMBER() OVER (PARTITION BY e.officer_id ORDER BY ${PRI}, e.id) AS rn ` +
         "FROM emails e JOIN companies c ON c.cik=e.cik " +
-        "WHERE e.verification_status IN ('probable','guessed') AND e.response_code IS NULL" +
-        ") WHERE rn=1 ORDER BY op DESC, (vs='probable') DESC, id LIMIT ?"
+        "WHERE (e.verification_status='verified' AND e.response_code='scraped_site') " +
+        "   OR (e.verification_status IN ('probable','guessed') AND e.response_code IS NULL)" +
+        ") WHERE rn=1 ORDER BY op DESC, pri ASC, id LIMIT ?"
     )
       .bind(room)
       .all<any>()
@@ -526,6 +534,27 @@ async function stepVerifyApi(env: Env, client: EdgarClient, max: number): Promis
 // footprint). Once an officer's address is scraped+matched we learn the domain's
 // dominant local-part pattern and emit a single high-confidence guess for the
 // rest, instead of all eight templates (Hunter.io-style per-domain pattern).
+// Fetch a filing's offering circular / prospectus HTML — the LARGEST HTML doc in
+// the filing — which is where the issuer's website actually appears. (For Reg A+
+// the primary doc is just an XML cover with no URL, so harvesting that yields
+// nothing; the website lives in the Part II/offering-circular exhibit.) Costs two
+// SEC requests: the filing index + the chosen document.
+async function fetchFilingHtml(client: EdgarClient, cik: number, accession: string): Promise<string | null> {
+  const nodash = String(accession).replace(/-/g, "");
+  const base = `https://www.sec.gov/Archives/edgar/data/${cik}/${nodash}`;
+  let idx: any;
+  try {
+    idx = await client.getJson(`${base}/index.json`);
+  } catch {
+    return null;
+  }
+  const html = ((idx?.directory?.item as any[]) || [])
+    .filter((it) => /\.html?$/i.test(it?.name || "") && !/(^R\d)|index/i.test(it?.name || ""))
+    .sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0));
+  if (!html.length) return null;
+  return await client.getText(`${base}/${html[0].name}`).catch(() => null);
+}
+
 async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<number> {
   // A company is email-able as soon as it has top-3 officers + a name — it does
   // NOT need the separate company-enrichment step first. (Enrichment fills SIC /
@@ -587,20 +616,16 @@ async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<nu
 
       let website: string | null = c.website;
       if (!website && !isSpvByName && !client.budget.exhausted) {
-        // Only HTML offering docs carry a website; Form D is XML and never does,
-        // so skip it to avoid wasting a fetch.
+        // Harvest the issuer URL from the offering circular (largest HTML doc) of
+        // the latest non-Form-D filing. Form D is XML with no website, so skip it.
         const f = await env.DB.prepare(
-          "SELECT cik, accession, primary_doc FROM filings WHERE cik=? AND status='parsed' " +
+          "SELECT cik, accession FROM filings WHERE cik=? AND status='parsed' " +
             "AND form_type NOT IN ('D','D/A') ORDER BY filing_date DESC LIMIT 1"
         )
           .bind(cik)
           .first<any>();
         if (f) {
-          const nodash = String(f.accession).replace(/-/g, "");
-          const doc = f.primary_doc || "primary_doc.xml";
-          const content = await client.getText(
-            `https://www.sec.gov/Archives/edgar/data/${f.cik}/${nodash}/${doc}`
-          ).catch(() => null);
+          const content = await fetchFilingHtml(client, Number(f.cik), String(f.accession));
           if (content) {
             const site = extractWebsiteFromFiling(content, c.name);
             if (site) {
