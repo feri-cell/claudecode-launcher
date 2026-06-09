@@ -314,6 +314,18 @@ async function resolveDomainViaSearch(
 ): Promise<string | null> {
   const key = env.SEARCH_API_KEY;
   if (!key || !name) return null;
+
+  // Free-tier quota guard. Brave's free plan is ~2,000 queries/month, so we keep
+  // a hard monthly counter in D1 and stop well under it. Resets on month change.
+  const cap = Math.max(0, Number(env.SEARCH_MONTHLY_CAP) || 1800);
+  const month = nowIso().slice(0, 7); // YYYY-MM
+  if ((await getState(env, "search_month")) !== month) {
+    await setState(env, "search_month", month);
+    await setState(env, "search_count", "0");
+  }
+  const used = Number((await getState(env, "search_count")) || "0");
+  if (used >= cap) return null; // monthly free-tier budget spent
+
   const provider = (env.SEARCH_PROVIDER || "brave").toLowerCase();
   const q = `${name} official website`;
   let url: string;
@@ -329,6 +341,7 @@ async function resolveDomainViaSearch(
     pick = (j) => (j?.web?.results ?? []).map((r: any) => r?.url).filter(Boolean);
   }
   const j = await client.getExternalJson(url, headers);
+  await setState(env, "search_count", String(used + 1)); // count the query we issued
   if (!j) return null;
   for (const u of pick(j)) {
     try {
@@ -374,6 +387,11 @@ async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<nu
   ).results;
 
   const scrapePages = Math.max(1, Number(env.EMAIL_SCRAPE_PAGES) || 3);
+  // Throttle web-search lookups: at most this many per tick (≈ per minute), which
+  // also keeps us trivially under the provider's per-second rate limit. Combined
+  // with the monthly cap inside resolveDomainViaSearch, search stays free-tier.
+  const maxSearchPerTick = Math.max(0, Number(env.SEARCH_MAX_PER_TICK) || 1);
+  let searchesUsed = 0;
   let done = 0;
   for (const c of companies) {
     if (client.budget.exhausted) break;
@@ -451,11 +469,14 @@ async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<nu
           await scrapeExtraPages(domain);
         }
       } else if (!isSpvByName) {
-        // Best candidate first: a web-search hit (if a key is configured), then
-        // name-guessed slugs across a few TLDs. Take the first with an MX record.
-        const searched = await resolveDomainViaSearch(env, client, c.name);
+        // Best candidate first: a web-search hit (rationed, if a key is
+        // configured), then name-guessed slugs across a few TLDs. First with MX wins.
         const cands: string[] = [];
-        if (searched) cands.push(searched);
+        if (env.SEARCH_API_KEY && searchesUsed < maxSearchPerTick) {
+          searchesUsed++;
+          const searched = await resolveDomainViaSearch(env, client, c.name);
+          if (searched) cands.push(searched);
+        }
         for (const g of guessDomainCandidates(c.name)) if (!cands.includes(g)) cands.push(g);
         for (const d of cands) {
           if (client.budget.exhausted) break;

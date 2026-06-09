@@ -43,7 +43,13 @@
     // scraped per trusted company for real mailto: addresses.
     "EMAIL_PER_TICK": "40",
     "EMAIL_REQUEST_RESERVE": "16",
-    "EMAIL_SCRAPE_PAGES": "3"
+    "EMAIL_SCRAPE_PAGES": "3",
+    // Web-search domain discovery (optional). The SEARCH_API_KEY itself is a
+    // wrangler secret, not here. Quota guards keep usage in the provider's free
+    // tier: at most SEARCH_MAX_PER_TICK lookups/tick and SEARCH_MONTHLY_CAP/month.
+    "SEARCH_PROVIDER": "brave",
+    "SEARCH_MONTHLY_CAP": "1800",
+    "SEARCH_MAX_PER_TICK": "1"
   },
 
   "observability": { "enabled": true }

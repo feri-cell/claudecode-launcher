@@ -18,6 +18,8 @@ export interface Env {
   INCREMENTAL_OVERLAP_DAYS?: string; // lookback window for the incremental pass (default 10)
   SEARCH_API_KEY?: string;           // optional: web-search key for domain discovery (inert if unset)
   SEARCH_PROVIDER?: string;          // 'brave' (default) | 'bing'
+  SEARCH_MONTHLY_CAP?: string;       // hard monthly query cap to stay in free tier (default 1800)
+  SEARCH_MAX_PER_TICK?: string;      // max search lookups per cron tick (default 1)
 }
 
 // Allowed verdicts the external SMTP verifier may write back.
