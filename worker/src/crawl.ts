@@ -149,8 +149,13 @@ async function pendingWindowCount(env: Env): Promise<number> {
 
 async function stepDiscovery(env: Env, client: EdgarClient, skip: Set<number>): Promise<"ok" | "none"> {
   const skipList = skip.size ? ` AND id NOT IN (${[...skip].join(",")})` : "";
+  // Operating-company regs (Reg A+, S, 144A) are where real websites + verifiable
+  // emails live; Form D is a huge SPV/fund backlog with almost no email footprint.
+  // Process non-D windows FIRST so the pipeline reaches operating companies fast
+  // instead of grinding through ~half a million Form D filings before them.
   const w = await env.DB.prepare(
-    `SELECT * FROM disco_windows WHERE status='pending'${skipList} ORDER BY id LIMIT 1`
+    `SELECT * FROM disco_windows WHERE status='pending'${skipList} ` +
+      `ORDER BY CASE WHEN regulation='D' THEN 1 ELSE 0 END, id LIMIT 1`
   ).first<any>();
   if (!w) return "none";
 
