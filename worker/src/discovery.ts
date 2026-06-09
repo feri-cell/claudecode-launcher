@@ -3,7 +3,11 @@
 // _source.ciks[0], NEVER the accession's filer-agent segment.
 
 export const REGULATION_FORMS: Record<string, string[]> = {
-  "A+": ["1-A", "1-A/A", "253G1", "253G2", "253G3", "253G4"],
+  // Reg A+: the offering statement (1-A / its amendments / POS) AND the ongoing
+  // reports (1-K annual, 1-SA semi-annual). The reports carry a signature page +
+  // an "Item — Directors and Officers" section, so they're a second, often
+  // cleaner, source of officer names than the long offering circular.
+  "A+": ["1-A", "1-A/A", "1-A POS", "253G1", "253G2", "253G3", "253G4", "1-K", "1-K/A", "1-SA", "1-SA/A"],
   "D": ["D"],
   "S": ["F-1", "F-1/A", "F-3", "F-3/A"],
   "144A": ["S-1", "S-1/A", "S-3", "S-3/A", "F-4", "F-4/A"],
@@ -14,7 +18,8 @@ export const REGULATION_FORMS: Record<string, string[]> = {
 export function formStartYear(form: string): number {
   const f = form.toUpperCase();
   if (f === "D") return 2008;                       // Form D electronic from 2008
-  if (f.startsWith("1-A") || f.startsWith("253G")) return 2015; // Reg A+ (JOBS Act)
+  // Reg A+ family (offering statement + ongoing reports) — all post JOBS Act.
+  if (f.startsWith("1-A") || f.startsWith("253G") || f.startsWith("1-K") || f.startsWith("1-SA")) return 2015;
   return 2001;                                      // EFTS full-text starts 2001
 }
 

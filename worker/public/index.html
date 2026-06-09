@@ -456,8 +456,9 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
     <div class="data-bar" id="data-bar">
       <span style="font-size:16px;">✓</span>
       <div style="flex:1;"><strong id="data-bar-t">0 filings loaded</strong></div>
-      <button class="btn btn-ghost btn-xs" onclick="goPage('enrich')">Enrichment</button>
-      <button class="btn btn-ghost btn-xs" onclick="clearAll()">Clear</button>
+      <button class="btn btn-ghost btn-xs" onclick="goPage('enrich')" title="Open the EDGAR Enrichment panel to start or resume pulling filings.">Enrichment</button>
+      <button class="btn btn-primary btn-xs" onclick="refreshData()" title="Re-pull the latest contacts &amp; emails from EDGAR. Your lists, statuses and edits are kept.">↻ Refresh</button>
+      <button class="btn btn-ghost btn-xs" onclick="clearAll()" title="Hides the on-screen view only — nothing is deleted from the server, and lists are kept. Refresh to bring it back.">Clear view</button>
     </div>
 
     <div class="ticker"><span class="ticker-lbl">EDGAR</span><span class="ticker-txt" id="tick-t">Ready</span><span class="ticker-t" id="tick-d">—</span></div>
@@ -1004,6 +1005,59 @@ let activeListId = '__all__';   // currently viewed list
 let pickedColor  = '#1976d2';   // color picker state
 let newListFromModal = false;   // flag for post-create context
 
+/* ══════════════════════════════════════════════
+   PERSISTENCE — lists, list memberships, statuses and manual edits live only in
+   the browser (the server/D1 only stores the raw EDGAR contacts). Without this,
+   a page refresh wiped every list. We mirror that user layer into localStorage
+   and merge it back on top of the freshly-pulled EDGAR CSV on every load.
+   ══════════════════════════════════════════════ */
+const LS_KEY = 'msc_dashboard_v1';
+function persistState(){
+  try{
+    const contacts = {};
+    for(const k in DB.contacts){
+      const c = DB.contacts[k]; if(!c) continue;
+      const lids = c.list_ids ? [...c.list_ids] : [];
+      // Only keep contacts the user actually organised or added by hand — keeps
+      // localStorage small and bounded even with tens of thousands of filings.
+      if(!c.list_status && lids.length===0 && c.src!=='msc' && !c.last_emailed) continue;
+      contacts[k] = {first:c.first||'',last:c.last||'',role:c.role||'',email:c.email||'',
+        list_status:c.list_status||null,added_to_list:c.added_to_list||null,
+        last_emailed:c.last_emailed||null,seq_num:c.seq_num||0,src:c.src||'edgar',list_ids:lids};
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify({v:1,lists:DB.lists,activeListId,contacts}));
+  }catch(e){ /* storage full / disabled — non-fatal, data still lives server-side */ }
+}
+function restoreState(){
+  try{
+    const raw = localStorage.getItem(LS_KEY); if(!raw){ window._savedContacts={}; return; }
+    const s = JSON.parse(raw);
+    if(Array.isArray(s.lists)) DB.lists = s.lists;
+    if(s.activeListId) activeListId = s.activeListId;
+    // Stash the per-contact user layer; merged into DB.contacts during parseChunked.
+    window._savedContacts = {};
+    for(const k in (s.contacts||{})){
+      const c = s.contacts[k];
+      window._savedContacts[k] = {...c, list_ids:new Set(c.list_ids||[])};
+    }
+  }catch(e){ window._savedContacts = {}; }
+}
+// Re-add organised/manual contacts that weren't in the latest EDGAR CSV so they
+// don't vanish on a refresh (e.g. hand-added contacts, or filings aged out).
+function mergeSavedOrphans(){
+  const saved = window._savedContacts; if(!saved) return;
+  for(const k in saved){
+    if(DB.contacts[k]) continue;            // already rebuilt from the CSV
+    const c = saved[k];
+    if(!c.list_status && (!c.list_ids || c.list_ids.size===0)) continue;
+    DB.contacts[k] = {first:c.first||'',last:c.last||'',role:c.role||'',email:c.email||'',
+      email_verified:!!c.email,email_tier:c.email?'verified':'',guessed_email:'',
+      list_status:c.list_status||null,added_to_list:c.added_to_list||null,
+      last_emailed:c.last_emailed||null,seq_num:c.seq_num||0,src:c.src||'edgar',
+      list_ids:c.list_ids instanceof Set?c.list_ids:new Set(c.list_ids||[])};
+  }
+}
+
 function listById(id){ return DB.lists.find(l=>l.id===id)||null; }
 function nextListId(){ return 'list_'+Date.now(); }
 function listColor(id){
@@ -1214,8 +1268,9 @@ function parseChunked(text){
     return'A+';
   }
 
-  /* Preserve existing contact data across re-import */
-  const prevContacts = {...DB.contacts};
+  /* Preserve existing contact data across re-import — including the persisted
+     user layer (list membership, statuses, manual edits) from localStorage. */
+  const prevContacts = {...(window._savedContacts||{}), ...DB.contacts};
 
   /* Reset DB */
   DB.rows   = [];
@@ -1301,6 +1356,7 @@ function parseChunked(text){
         added_to_list: prev.added_to_list || null,
         last_emailed:  prev.last_emailed  || null,
         seq_num:       prev.seq_num       || 0,
+        list_ids:      prev.list_ids ? (prev.list_ids instanceof Set ? prev.list_ids : new Set(prev.list_ids)) : new Set(),
         src: src==='msc'?'msc':'edgar',
       };
 
@@ -1345,6 +1401,7 @@ function splitCSVLine(line){
 function finishImport(){
   DB.stats.total = DB.rows.length;
   dataLoaded = true;
+  mergeSavedOrphans();   // bring back organised/manual contacts not in this CSV
 
   // Silent path (auto-load from the EDGAR tab): update text/data in place with
   // no progress overlay, no toast, and preserve the user's current table page —
@@ -1362,6 +1419,9 @@ function finishImport(){
     updateMetrics();
     updateRegCards();
     updateSidebar();
+    if(typeof renderNamedLists==='function') renderNamedLists();
+    if(typeof refreshListDropdowns==='function') refreshListDropdowns();
+    persistState();
     window.mscSilent = false;
     return;
   }
@@ -1381,12 +1441,15 @@ function finishImport(){
     updateRegCards();
     updateSidebar();
     setTimeout(buildCharts,120);
+    if(typeof renderNamedLists==='function') renderNamedLists();
+    if(typeof refreshListDropdowns==='function') refreshListDropdowns();
+    persistState();
     toast(`${DB.rows.length.toLocaleString()} filings loaded`);
   },80);
 }
 
 function clearAll(){
-  if(!confirm('Remove all data?'))return;
+  if(!confirm('Clear the on-screen view?\n\nThis only hides the data in this browser — nothing is deleted from the server, and your lists are kept. Click "↻ Refresh" or reload the page to pull it all back.'))return;
   DB.rows=[];DB.contacts={};DB.stats={byReg:{},byYear:{},qualified:0,newWeek:0,total:0};DB.idx=[];
   dataLoaded=false;sentLog=[];
   ck('onboard').style.display='block';ck('loaded').style.display='none';
@@ -1832,6 +1895,7 @@ function saveList(){
   if(!name){toast('List name required','err');return;}
   const id = nextListId();
   DB.lists.push({id, name, color:pickedColor, created:new Date().toISOString().slice(0,10)});
+  persistState();
   closeOv('ov-newlist');
   toast('List "'+name+'" created');
   renderNamedLists();
@@ -1853,6 +1917,7 @@ function deleteList(id, e){
   });
   DB.lists = DB.lists.filter(l=>l.id!==id);
   if(activeListId === id) activeListId = '__all__';
+  persistState();
   renderNamedLists();
   refreshListDropdowns();
   renderList();
@@ -1866,6 +1931,7 @@ function renameList(id, e){
   const newName = prompt('Rename list:', l.name);
   if(newName && newName.trim()){
     l.name = newName.trim();
+    persistState();
     renderNamedLists();
     refreshListDropdowns();
     if(activeListId === id) ck('lt-title').textContent = l.name;
@@ -1986,6 +2052,7 @@ function confirmATL(){
   if(!c.list_status){ c.list_status='new'; c.added_to_list=new Date().toISOString().slice(0,10); }
 
   const row = DB.rows.find(r=>r.cik===cik&&r.reg===reg)||{};
+  persistState();
   closeOv('ov-addtolist');
   toast(`${row.co||'Contact'} added to ${selected.length} list${selected.length>1?'s':''}`);
   renderNamedLists();
@@ -2067,6 +2134,7 @@ function rmFromList(k){
     if(!c.list_ids?.size){ c.list_status=null; c.added_to_list=null; }
   }
   selKeys.delete(k);
+  persistState();
   renderNamedLists();
   renderList();
   rebuildIdx();
@@ -2080,6 +2148,7 @@ function chSt(k,val){
   const c=DB.contacts[k];if(!c)return;
   c.list_status=val;
   if(val==='contacted'&&!c.last_emailed)c.last_emailed=new Date().toISOString().slice(0,10);
+  persistState();
   renderList();rebuildIdx();renderTable();
   toast('Status → '+(LSC[val]?.label||val));
 }
@@ -2106,7 +2175,7 @@ function _addKeysToList(keys,lid){
   });
   return n;
 }
-function _afterBulkF(msg){toast(msg);clrSelF();renderNamedLists();renderList();renderOC();rebuildIdx();renderTable();updateListSidebarCounts();updateMetrics();}
+function _afterBulkF(msg){persistState();toast(msg);clrSelF();renderNamedLists();renderList();renderOC();rebuildIdx();renderTable();updateListSidebarCounts();updateMetrics();}
 function bulkAddToListF(){
   if(!selKeysF.size){toast('Tick some rows first','err');return;}
   const lid=ck('bk-mv-f').value;
@@ -2127,11 +2196,13 @@ function bulkNewListF(){
 function applyBulk(){
   const val=ck('bk-sel').value;if(!val){toast('Select a status','err');return;}
   selKeys.forEach(k=>{const c=DB.contacts[k];if(c)c.list_status=val;});
+  persistState();
   toast('Updated '+selKeys.size);clrSel();renderList();rebuildIdx();renderTable();
 }
 function bulkMoveToList(){
   const lid=ck('bk-mv').value;if(!lid){toast('Select a list','err');return;}
   selKeys.forEach(k=>{const c=DB.contacts[k];if(!c)return;if(!c.list_ids)c.list_ids=new Set();c.list_ids.add(lid);if(!c.list_status){c.list_status='new';c.added_to_list=new Date().toISOString().slice(0,10);}});
+  persistState();
   toast('Moved '+selKeys.size+' contacts to "'+listName(lid)+'"');
   clrSel();renderNamedLists();renderList();updateListSidebarCounts();
 }
@@ -2176,6 +2247,7 @@ function saveContact(){
     toast(fn+' '+ln+' added'+(selectedListId?' to "'+listName(selectedListId)+'"':''));
   }
   closeOv('ov-add');_editKey=null;
+  persistState();
   rebuildIdx();renderTable();renderOC();renderNamedLists();renderList();updateListSidebarCounts();updateMetrics();
   ['m-fn','m-ln','m-co','m-em','m-cik','m-yr'].forEach(id=>{const el=ck(id);if(el)el.value='';});
 }
@@ -2399,9 +2471,22 @@ async function mscLoadCsv(silent){
   }catch(e){ if(!silent) toast('Load failed: '+e.message,'err'); }
 }
 
+/* Manual "↻ Refresh": save the user layer, re-pull the freshest EDGAR contacts
+   and emails from the server, and merge lists/statuses/edits back on top —
+   staying on the current page without flicker. */
+async function refreshData(){
+  persistState();
+  window.mscSavedPage = (typeof DB!=='undefined') ? DB.page : 0;
+  toast('Refreshing from EDGAR…');
+  await mscLoadCsv('refresh');           // truthy → silent path (no flicker, keeps page)
+  toast('Refreshed — lists, statuses & edits kept');
+}
+
 /* On load: detect whether we're served by the Worker; reveal the live controls
    and pull existing contacts in automatically. */
 async function mscBoot(){
+  restoreState();   // bring lists, memberships & statuses back BEFORE any CSV load
+  if(typeof renderNamedLists==='function') renderNamedLists();
   try{
     const p = await (await fetch('/api/progress')).json();
     mscState.online = true;
@@ -2419,6 +2504,11 @@ async function mscBoot(){
     mscText('ct-en','off');
   }
 }
+// Safety nets so the user layer is never lost on a refresh/close, even if a
+// mutating action forgot to call persistState().
+window.addEventListener('pagehide', persistState);
+window.addEventListener('beforeunload', persistState);
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden') persistState(); });
 mscBoot();
 </script>
 </body>

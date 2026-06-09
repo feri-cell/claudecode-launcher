@@ -37,8 +37,14 @@ export function isPersonName(text: string): boolean {
   return true;
 }
 
+const NAME_SUFFIXES = new Set(["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"]);
+
 export function splitName(full: string): [string, string] {
-  const parts = full.replace(/\s+/g, " ").trim().replace(/,+$/, "").split(" ").filter(Boolean);
+  let parts = full.replace(/\s+/g, " ").trim().replace(/,+$/, "").split(" ").filter(Boolean);
+  // Drop a trailing generational suffix so "John Smith Jr." → last name "Smith".
+  if (parts.length > 2 && NAME_SUFFIXES.has(parts[parts.length - 1].toLowerCase())) {
+    parts = parts.slice(0, -1);
+  }
   if (!parts.length) return ["", ""];
   if (parts.length === 1) return [parts[0], ""];
   return [parts[0], parts[parts.length - 1]];
@@ -125,13 +131,31 @@ export function parseFormDXml(xml: string): Officer[] {
   return officers;
 }
 
-// --- Parser 2/3 — HTML (1-A / 253G / S / F-series) ------------------------- //
+// --- Parser 2/3 — HTML (1-A / 253G / 1-K / 1-SA / S / F-series) ------------- //
+// Reg A+ filings are free-form HTML, so recall depends entirely on how the
+// issuer laid the document out. We run THREE complementary passes and union the
+// results, leaning on isPersonName()/makeOfficer() to keep precision high.
+const NAME_TOKEN = "[A-Z][A-Za-z.'\\-]+";
+const NAME_PAT = `${NAME_TOKEN}(?:\\s+(?:${NAME_TOKEN}|[A-Z]\\.))(?:\\s+(?:${NAME_TOKEN}|[A-Z]\\.|Jr\\.?|Sr\\.?|II|III|IV)){0,3}`;
+// A role keyword covering the same vocabulary as roles.ts ROLE_HINTS so the two
+// stay in agreement (multi-word titles first so the regex prefers the longest).
 const ROLE_KW =
-  "(?:Officer|President|Director|Chairman|Secretary|Treasurer|Counsel|" +
-  "Manager|Member|Founder|CEO|CFO|COO|CTO)";
+  "(?:Chief\\s+[A-Za-z]+\\s+Officer|Chief\\s+Executive|Chief\\s+Financial|Chief\\s+Operating|" +
+  "Executive\\s+Officer|Vice\\s+President|General\\s+Counsel|Chief\\s+Legal\\s+Officer|" +
+  "Managing\\s+(?:Member|Director|Partner)|Co-?Founder|" +
+  "President|Director|Chairman|Chairperson|Chair|Secretary|Treasurer|Counsel|" +
+  "Manager|Member|Founder|Principal|Partner|Trustee|Owner|" +
+  "CEO|CFO|COO|CTO)";
+// "/s/ John Smith, Chief Executive Officer" — separator may be a comma, dash, or
+// just whitespace before the title (EDGAR signature pages vary widely).
 const SIG_RE = new RegExp(
-  "(?:/s/\\s*)?([A-Z][A-Za-z.'\\-]+(?:\\s+[A-Z][A-Za-z.'\\-]+){1,3})\\s*,\\s*" +
-    "((?:[A-Z][A-Za-z]+[ &/]+)*" + ROLE_KW + ")",
+  `(?:/s/\\s*)?(${NAME_PAT})\\s*[,\\-–—]\\s*((?:[A-Z][A-Za-z]+[ &/]+)*${ROLE_KW})`,
+  "g"
+);
+// Signature-block label pairs: "Name: John Smith … Title: Chief Executive
+// Officer" (very common on 1-A / 1-K signature pages and in Item 10 prose).
+const NAMETITLE_RE = new RegExp(
+  `Name\\s*[:\\-]\\s*(${NAME_PAT})[\\s\\S]{0,80}?Title\\s*[:\\-]\\s*([A-Z][A-Za-z][A-Za-z &/\\-]{2,60})`,
   "g"
 );
 
@@ -142,23 +166,41 @@ function cellText(s: string): string {
 export function parseHtmlOfficers(html: string, sourceType: string): Officer[] {
   const root = parseHtml(html, { blockTextElements: { script: false, style: false } });
   const found = new Map<string, Officer>();
+  const add = (name: string, role: string) => {
+    const off = makeOfficer(name, role, sourceType);
+    if (off && !found.has(off.full_name.toLowerCase())) found.set(off.full_name.toLowerCase(), off);
+  };
 
-  // 1) Tables: pair a name-like cell with a role-like cell in each row.
+  // 1) Tables: pair EVERY name-like cell in a row with its nearest role-like
+  //    cell, so multi-person rows ("Jane Doe | CEO | John Roe | CFO") aren't
+  //    collapsed to a single contact the way a one-name-per-row scan would.
   for (const row of root.querySelectorAll("tr")) {
     const cells = row.querySelectorAll("td, th").map((c) => cellText(c.text));
-    const nameCell = cells.find((c) => isPersonName(c));
-    const roleCell = cells.find((c) => c !== nameCell && looksLikeRole(c));
-    if (nameCell && roleCell) {
-      const off = makeOfficer(nameCell, roleCell, sourceType);
-      if (off && !found.has(off.full_name.toLowerCase())) found.set(off.full_name.toLowerCase(), off);
+    const nameIdx = cells.map((c, i) => (isPersonName(c) ? i : -1)).filter((i) => i >= 0);
+    const roleIdx = cells.map((c, i) => (looksLikeRole(c) ? i : -1)).filter((i) => i >= 0);
+    for (const ni of nameIdx) {
+      let best = -1;
+      let bestDist = Infinity;
+      for (const ri of roleIdx) {
+        if (ri === ni) continue;
+        const d = Math.abs(ri - ni);
+        // On a tie, prefer the role to the RIGHT of the name — tables read
+        // "Name, Title", so in "Jane | CEO | John | CFO" John pairs with CFO.
+        if (d < bestDist || (d === bestDist && ri > ni && best < ni)) {
+          bestDist = d;
+          best = ri;
+        }
+      }
+      if (best >= 0) add(cells[ni], cells[best]);
     }
   }
 
-  // 2) Signature lines: "Name, Role" / "/s/ Name, Role".
   const text = root.structuredText;
-  for (const m of text.matchAll(SIG_RE)) {
-    const off = makeOfficer(m[1], m[2], sourceType);
-    if (off && !found.has(off.full_name.toLowerCase())) found.set(off.full_name.toLowerCase(), off);
+  // 2) Signature lines: "Name, Role" / "/s/ Name - Role".
+  for (const m of text.matchAll(SIG_RE)) add(m[1], m[2]);
+  // 3) Label pairs: "Name: … Title: …".
+  for (const m of text.matchAll(NAMETITLE_RE)) {
+    if (looksLikeRole(m[2])) add(m[1], m[2]);
   }
 
   return [...found.values()];
