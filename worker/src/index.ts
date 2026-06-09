@@ -19,6 +19,7 @@ export interface Env {
   SEARCH_API_KEY?: string;           // optional: web-search key for domain discovery (inert if unset)
   SEARCH_PROVIDER?: string;          // 'brave' (default) | 'bing'
   SEARCH_MONTHLY_CAP?: string;       // hard monthly query cap to stay in free tier (default 1800)
+  SEARCH_DAILY_CAP?: string;         // daily cap that spreads the monthly budget (default 60; 0 disables)
   SEARCH_MAX_PER_TICK?: string;      // max search lookups per cron tick (default 1)
   VERIFY_API_KEY?: string;           // optional: HTTPS email-verification key (Verifalia "user:pass" etc.); inert if unset
   VERIFY_API_PROVIDER?: string;      // 'verifalia' | 'abstract' | 'mailboxlayer' | 'hunter'

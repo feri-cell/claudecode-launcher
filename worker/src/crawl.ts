@@ -157,12 +157,13 @@ async function stepDiscovery(env: Env, client: EdgarClient, skip: Set<number>): 
   const skipList = skip.size ? ` AND id NOT IN (${[...skip].join(",")})` : "";
   // Regulation priority for discovery. Reg A+ is the primary target — its Form
   // 1-A offering circulars reliably print the issuer's website (→ harvest → real,
-  // verifiable emails). Reg D is next (high volume, but SPV/fund-heavy with little
-  // email footprint), then S and 144A. This stops discovery from grinding through
-  // ~half a million Form D filings before ever reaching Reg A+.
+  // verifiable emails). Then the other OPERATING-company regs S and 144A. Reg D is
+  // LAST: it's by far the highest volume (most of the ~half-million filings) but is
+  // SPV/fund/shell-heavy with little email footprint, so we discover and enrich
+  // every A+/S/144A issuer before grinding through the Form D backlog.
   const w = await env.DB.prepare(
     `SELECT * FROM disco_windows WHERE status='pending'${skipList} ` +
-      `ORDER BY CASE regulation WHEN 'A+' THEN 0 WHEN 'D' THEN 1 WHEN 'S' THEN 2 ELSE 3 END, id LIMIT 1`
+      `ORDER BY CASE regulation WHEN 'A+' THEN 0 WHEN 'S' THEN 1 WHEN '144A' THEN 2 WHEN 'D' THEN 3 ELSE 4 END, id LIMIT 1`
   ).first<any>();
   if (!w) return "none";
 
@@ -327,16 +328,28 @@ async function resolveDomainViaSearch(
   const key = env.SEARCH_API_KEY;
   if (!key || !name) return null;
 
-  // Free-tier quota guard. Brave's free plan is ~2,000 queries/month, so we keep
-  // a hard monthly counter in D1 and stop well under it. Resets on month change.
+  // Free-tier quota guard. Brave's free plan is ~2,000 queries/month. Two counters
+  // in D1: a hard MONTHLY cap (stay under the plan) AND a DAILY cap that SPREADS the
+  // monthly budget across the month. Without the daily cap, search at a few per tick
+  // would burn the whole month's allowance in ~a day and then be dead for ~29 days;
+  // the daily cap (≈ monthly/30) keeps domain discovery alive every day. Reset on
+  // month / day change.
   const cap = Math.max(0, Number(env.SEARCH_MONTHLY_CAP) || 1800);
+  const dailyCap = Math.max(0, Number(env.SEARCH_DAILY_CAP) || 60);
   const month = nowIso().slice(0, 7); // YYYY-MM
+  const day = nowIso().slice(0, 10); // YYYY-MM-DD
   if ((await getState(env, "search_month")) !== month) {
     await setState(env, "search_month", month);
     await setState(env, "search_count", "0");
   }
+  if ((await getState(env, "search_day")) !== day) {
+    await setState(env, "search_day", day);
+    await setState(env, "search_day_count", "0");
+  }
   const used = Number((await getState(env, "search_count")) || "0");
+  const dayUsed = Number((await getState(env, "search_day_count")) || "0");
   if (used >= cap) return null; // monthly free-tier budget spent
+  if (dailyCap > 0 && dayUsed >= dailyCap) return null; // today's slice spent
 
   const provider = (env.SEARCH_PROVIDER || "brave").toLowerCase();
   const q = `${name} official website`;
@@ -353,7 +366,9 @@ async function resolveDomainViaSearch(
     pick = (j) => (j?.web?.results ?? []).map((r: any) => r?.url).filter(Boolean);
   }
   const j = await client.getExternalJson(url, headers);
-  await setState(env, "search_count", String(used + 1)); // count the query we issued
+  // Count the query we issued against both the monthly and daily budgets.
+  await setState(env, "search_count", String(used + 1));
+  await setState(env, "search_day_count", String(dayUsed + 1));
   if (!j) return null;
   for (const u of pick(j)) {
     try {
