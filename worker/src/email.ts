@@ -271,8 +271,13 @@ export function pageMentionsCompany(html: string, name: string | null | undefine
   return toks.some((t) => t.length >= 4 && folded.includes(t)); // a distinctive word
 }
 
-// Site paths worth scraping for contact addresses, homepage first.
-export const SCRAPE_PATHS = ["/", "/team", "/about", "/contact", "/leadership"];
+// Site paths worth scraping for contact addresses, homepage first, then ordered
+// by observed yield on real issuer sites: /contact carries the domain-confirming
+// generic mailbox (info@/hello@) that upgrades a guess to 'probable', and /team
+// /leadership carry the exec bios where a person's first.last@ address (the only
+// path to a 'verified' scrape) actually appears. /about is lowest-yield, last.
+// The default EMAIL_SCRAPE_PAGES (3) thus covers / + /contact + /team.
+export const SCRAPE_PATHS = ["/", "/contact", "/team", "/leadership", "/about"];
 
 // --- website discovery from a filing document ------------------------------ //
 // Reg A+ / S-1 / F-1 offering documents almost always print the issuer's own

@@ -133,7 +133,7 @@ export class EdgarClient {
   // contact UA — but they DO count against the per-tick request budget and the
   // Worker's subrequest cap, so they spend the same Budget and pass the rate
   // gate. Failures return null (best-effort) rather than aborting the tick.
-  async getExternalText(url: string, timeoutMs = 8000): Promise<string | null> {
+  async getExternalText(url: string, timeoutMs = 8000, maxBytes = 600_000): Promise<string | null> {
     if (this.budget.exhausted) return null;
     await this.gate();
     this.budget.spend();
@@ -150,7 +150,39 @@ export class EdgarClient {
       if (!resp.ok) return null;
       const ct = resp.headers.get("content-type") || "";
       if (ct && !/text|html|xml|json/i.test(ct)) return null; // skip binaries
-      return await resp.text();
+      // Cap the read: issuer homepages can be 300-600KB+, and reading one whole
+      // then regex-scanning + asciiFold-normalizing it (email extract + ownership
+      // check) per company is a CPU spike on the free plan — the same hazard
+      // Phase 26 fixed for SEC docs. Emails/contact blocks live well within the
+      // first few hundred KB, so streaming to maxBytes is lossless in practice.
+      if (!resp.body) return await resp.text().catch(() => null);
+      const reader = resp.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            total += value.length;
+            if (total >= maxBytes) {
+              await reader.cancel().catch(() => {});
+              break;
+            }
+          }
+        }
+      } catch {
+        // truncated read still yields whatever we got
+      }
+      if (!chunks.length) return null;
+      const buf = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) {
+        buf.set(c, off);
+        off += c.length;
+      }
+      return new TextDecoder().decode(buf);
     } catch {
       return null;
     } finally {
