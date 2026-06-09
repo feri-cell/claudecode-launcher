@@ -1094,12 +1094,9 @@ function emTier(c){
   const t=c.email_tier||(c.email_verified?'verified':'guessed');
   // Within 'verified', distinguish a live mailbox/SMTP check from a site-scraped
   // address (or a manual edit) — different confidence, same tier.
-  const vBadge = (()=>{
-    const m=c.verify_method;
-    if(m==='smtp') return '<span title="Verified by live SMTP / mailbox check (Verifalia) — confirmed deliverable" style="color:var(--green);font-size:9px;font-weight:800;margin-left:4px;">✓ SMTP-VERIFIED</span>';
-    if(m==='manual') return '<span title="Manually confirmed by you" style="color:var(--green);font-size:9px;font-weight:800;margin-left:4px;">✓ CONFIRMED</span>';
-    return '<span title="Verified — published on the company’s own site + name-matched (not a live mailbox check)" style="color:var(--green);font-size:9px;font-weight:800;margin-left:4px;">✓ VERIFIED (site)</span>';
-  })();
+  const vBadge = c.verify_method==='smtp'
+    ? '<span title="Verified by live SMTP / mailbox check (Verifalia) — confirmed deliverable" style="color:var(--green);font-size:9px;font-weight:800;margin-left:4px;">✓ SMTP-VERIFIED</span>'
+    : '<span title="Verified — published on the company’s own site + name-matched (not a live mailbox check)" style="color:var(--green);font-size:9px;font-weight:800;margin-left:4px;">✓ VERIFIED (site)</span>';
   const b = t==='verified'
     ? vBadge
     : t==='probable'
@@ -1200,18 +1197,16 @@ function parseContacts(rows){
 
     const k      = ck_key(cik,reg);
     const prev   = prevContacts[k] || {};
-    const realEmail = prev.email || email;
-    const bestEmail = realEmail || gemail;
-    // A user-confirmed (prev) or scraped email is 'verified'; otherwise inherit
-    // the Worker's grade for the guessed address.
-    const emailTier = realEmail ? 'verified' : (estat || (gemail ? 'guessed' : ''));
-    // How the verified email was established. Decide from the API's verified
-    // address + its response_code — NOT from whether we had an email before (that
-    // mislabeled every reloaded API email as "manual"). Only a user-supplied email
-    // the API doesn't have counts as manual.
-    const verifyMethod = emailTier!=='verified' ? ''
-      : email ? (/^(smtp|verifalia|api)/.test(ecode) ? 'smtp' : 'scraped')
-      : 'manual';
+    // Tier + method come ONLY from the fresh API data — never from a previously
+    // stored email. (The old `prev.email || email` promoted a stored *guess* to
+    // 'verified' on reload, which then showed as "CONFIRMED". No manual tier.)
+    //   email  = API's verified address (null unless verification_status='verified')
+    //   gemail = best probable/guessed address;  estat = the Worker's grade
+    const bestEmail = email || gemail;
+    const emailTier = email ? 'verified' : (estat || (gemail ? 'guessed' : ''));
+    const verifyMethod = email
+      ? (/^(smtp|verifalia|api)/.test(ecode) ? 'smtp' : 'scraped')  // live check vs on-site
+      : '';
     DB.contacts[k] = {
       first: prev.first || fname,
       last:  prev.last  || lname,
