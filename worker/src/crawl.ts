@@ -11,6 +11,14 @@ import { REGULATION_FORMS, formStartYear, parseHit } from "./discovery";
 import { submissionsUrl, parseSubmissions } from "./company";
 import { parseDocument } from "./officers";
 import { TOP_N_OFFICERS } from "./roles";
+import {
+  domainFromWebsite,
+  guessDomain,
+  generatePatterns,
+  extractEmailsAtDomain,
+  matchOfficerEmail,
+  SCRAPE_PATHS,
+} from "./email";
 
 const nowIso = () => new Date().toISOString();
 
@@ -43,6 +51,29 @@ async function releaseLease(env: Env): Promise<void> {
   await env.DB.prepare("UPDATE crawl_state SET value='0', updated_at=? WHERE key='lease_until'")
     .bind(nowIso())
     .run();
+}
+
+// --- schema migration ------------------------------------------------------ //
+// The first remote D1 was created before the Layer 4 columns existed. D1 has no
+// "ADD COLUMN IF NOT EXISTS", so we run each ALTER once, guarded by a version
+// flag, and swallow the "duplicate column" error on DBs that already have them.
+const SCHEMA_VERSION = "2";
+const MIGRATIONS_V2 = [
+  "ALTER TABLE companies ADD COLUMN domain TEXT",
+  "ALTER TABLE companies ADD COLUMN domain_verified INTEGER DEFAULT 0",
+  "ALTER TABLE companies ADD COLUMN email_status TEXT",
+];
+
+export async function migrate(env: Env): Promise<void> {
+  if ((await getState(env, "schema_version")) === SCHEMA_VERSION) return;
+  for (const sql of MIGRATIONS_V2) {
+    try {
+      await env.DB.prepare(sql).run();
+    } catch (e) {
+      if (!/duplicate column/i.test(String(e))) throw e; // already applied
+    }
+  }
+  await setState(env, "schema_version", SCHEMA_VERSION);
 }
 
 // --- seeding: enqueue yearly discovery windows for the selected regs -------- //
@@ -240,10 +271,116 @@ async function recomputeTop3(env: Env, cik: number): Promise<void> {
   if (stmts.length) await env.DB.batch(stmts);
 }
 
+// --- step 4: email finding ------------------------------------------------- //
+// For each enriched company that has top-3 officers and hasn't been emailed yet:
+// resolve a mail domain (disclosed website → MX-validated name guess), scrape a
+// few pages for real addresses, then for every top-3 officer store a scraped
+// 'verified' hit (if found) plus the eight pattern guesses. The company is then
+// marked email_status='done' so it's never reprocessed, even when no domain is
+// found. SMTP probing is impossible on Workers, so guesses stay 'not_attempted'.
+async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<number> {
+  const companies = (
+    await env.DB.prepare(
+      "SELECT cik, name, website FROM companies " +
+        "WHERE status='enriched' AND email_status IS NULL " +
+        "AND EXISTS (SELECT 1 FROM officers o WHERE o.cik=companies.cik AND o.is_top_3=1) " +
+        "ORDER BY cik LIMIT ?"
+    )
+      .bind(max)
+      .all<any>()
+  ).results;
+
+  const scrapePages = Math.max(0, Number(env.EMAIL_SCRAPE_PAGES) || 3);
+  let done = 0;
+  for (const c of companies) {
+    if (client.budget.exhausted) break;
+    const cik = Number(c.cik);
+    try {
+      // 4a — resolve a mail domain. A disclosed website is trusted as-is; a name
+      // guess must clear an MX check before we'll attach addresses to it.
+      let domain = domainFromWebsite(c.website);
+      let domainVerified = false;
+      if (domain) {
+        domainVerified = await client.hasMxRecord(domain);
+      } else {
+        const guess = guessDomain(c.name);
+        if (guess && (await client.hasMxRecord(guess))) {
+          domain = guess;
+          domainVerified = true;
+        }
+      }
+
+      // 4c — Option C: scrape a few pages for real addresses at the domain.
+      const scraped: string[] = [];
+      if (domain && scrapePages > 0) {
+        for (const path of SCRAPE_PATHS.slice(0, scrapePages)) {
+          if (client.budget.exhausted) break;
+          const html = await client.getExternalText(`https://${domain}${path}`);
+          if (html) scraped.push(...extractEmailsAtDomain(html, domain));
+        }
+      }
+      const scrapedUniq = [...new Set(scraped)];
+
+      // For each top-3 officer: store the matched scraped address (verified) and
+      // the pattern guesses (not_attempted). Skip entirely if we have no domain.
+      if (domain) {
+        const officers = (
+          await env.DB.prepare(
+            "SELECT id, first, last FROM officers WHERE cik=? AND is_top_3=1 ORDER BY rank"
+          )
+            .bind(cik)
+            .all<any>()
+        ).results;
+        const stmts: D1PreparedStatement[] = [];
+        const now = nowIso();
+        for (const o of officers) {
+          const first = String(o.first || "");
+          const last = String(o.last || "");
+          const hit = matchOfficerEmail(scrapedUniq, first, last);
+          if (hit) {
+            stmts.push(
+              env.DB.prepare(
+                "INSERT INTO emails (cik, officer_id, address, pattern, verification_status, response_code, verified_at) " +
+                  "VALUES (?, ?, ?, 'scraped', 'verified', 'scraped_site', ?) " +
+                  "ON CONFLICT(officer_id, address) DO UPDATE SET verification_status='verified', response_code='scraped_site', verified_at=excluded.verified_at"
+              ).bind(cik, o.id, hit, now)
+            );
+          }
+          for (const cand of generatePatterns(first, last, domain)) {
+            const status = domainVerified ? "not_attempted" : "domain_unverified";
+            stmts.push(
+              env.DB.prepare(
+                "INSERT INTO emails (cik, officer_id, address, pattern, verification_status) VALUES (?, ?, ?, ?, ?) " +
+                  "ON CONFLICT(officer_id, address) DO NOTHING"
+              ).bind(cik, o.id, cand.address, cand.pattern, status)
+            );
+          }
+        }
+        if (stmts.length) await env.DB.batch(stmts);
+      }
+
+      await env.DB.prepare(
+        "UPDATE companies SET domain=?, domain_verified=?, email_status='done', last_updated_at=? WHERE cik=?"
+      )
+        .bind(domain, domainVerified ? 1 : 0, nowIso(), cik)
+        .run();
+    } catch (e) {
+      // Don't let one company wedge the queue; mark done with no addresses.
+      await env.DB.prepare("UPDATE companies SET email_status='done', last_updated_at=? WHERE cik=?")
+        .bind(nowIso(), cik)
+        .run();
+      void e;
+    }
+    done++;
+  }
+  return done;
+}
+
 // --- the tick -------------------------------------------------------------- //
 export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }> {
   if ((await getState(env, "paused")) === "1") return { ran: false, fetched: 0 };
   if (!(await acquireLease(env))) return { ran: false, fetched: 0 };
+  await migrate(env);
   const maxReq = Math.max(1, Number(env.MAX_REQUESTS_PER_TICK) || 40);
   const client = new EdgarClient(env, new Budget(maxReq));
   try {
@@ -260,6 +397,10 @@ export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }>
       }
       if (!client.budget.exhausted) did += await stepOfficers(env, client, 8).catch(() => 0);
       if (!client.budget.exhausted) did += await stepCompany(env, client, 12).catch(() => 0);
+      // Email is the lowest-priority stage: a small slice each round so contacts
+      // gain addresses during the backfill without starving discovery/officers.
+      const emailMax = Math.max(1, Number(env.EMAIL_PER_TICK) || 3);
+      if (!client.budget.exhausted) did += await stepEmail(env, client, emailMax).catch(() => 0);
       if (did === 0) {
         await setState(env, "active", "0"); // nothing left — backfill caught up
         break;

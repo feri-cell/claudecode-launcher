@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS companies (
     sic_description  TEXT,
     state            TEXT,
     status           TEXT,                      -- NULL = discovered, 'enriched' = Layer 2 done
+    domain           TEXT,                      -- Layer 4: resolved mail domain (acme.com)
+    domain_verified  INTEGER DEFAULT 0,         -- 1 if domain has an MX record
+    email_status     TEXT,                      -- NULL = pending, 'done' = Layer 4 ran
     first_seen_at    TEXT,
     last_updated_at  TEXT
 );

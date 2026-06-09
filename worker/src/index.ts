@@ -1,7 +1,7 @@
 // MSC EDGAR enrichment Worker — entry point.
 //   fetch():     serves the UI (static assets) and the /api/* endpoints
 //   scheduled(): every minute, advances the resumable backfill by one tick
-import { tick, startCrawl, getState, setState } from "./crawl";
+import { tick, startCrawl, getState, setState, migrate } from "./crawl";
 import { REGULATION_FORMS } from "./discovery";
 
 export interface Env {
@@ -10,6 +10,8 @@ export interface Env {
   USER_AGENT: string;
   MAX_REQUESTS_PER_TICK: string;
   REQUESTS_PER_SECOND: string;
+  EMAIL_PER_TICK?: string;     // companies to email-enrich per tick (default 3)
+  EMAIL_SCRAPE_PAGES?: string; // site pages to scrape per company (default 3)
 }
 
 const json = (data: unknown, status = 200) =>
@@ -26,6 +28,7 @@ export default {
     if (!path.startsWith("/api/")) return env.ASSETS.fetch(request);
 
     try {
+      await migrate(env); // ensure Layer 4 columns exist before any /api query reads them
       // POST /api/enrich {regs:["D","A+"]} — seed + start the crawl, run one tick now.
       if (path === "/api/enrich" && request.method === "POST") {
         const body = (await request.json().catch(() => ({}))) as { regs?: string[] };
@@ -73,11 +76,16 @@ export default {
 // --- progress snapshot ----------------------------------------------------- //
 async function progress(env: Env) {
   const q = (sql: string) => env.DB.prepare(sql).first<any>();
-  const [win, fil, comp, off] = await Promise.all([
+  const [win, fil, comp, off, eml] = await Promise.all([
     q("SELECT COUNT(*) AS total, SUM(status='done') AS done FROM disco_windows"),
     q("SELECT COUNT(*) AS total, SUM(status='parsed') AS parsed, SUM(status='incomplete') AS incomplete FROM filings"),
     q("SELECT COUNT(*) AS total, SUM(status='enriched') AS enriched, SUM(website IS NOT NULL) AS with_website FROM companies"),
     q("SELECT COUNT(*) AS total, SUM(is_top_3=1) AS top3 FROM officers"),
+    q(
+      "SELECT (SELECT COUNT(*) FROM officers WHERE is_top_3=1 AND id IN (SELECT officer_id FROM emails WHERE verification_status='verified')) AS verified, " +
+        "(SELECT COUNT(*) FROM officers WHERE is_top_3=1 AND id IN (SELECT officer_id FROM emails)) AS with_any, " +
+        "(SELECT COUNT(*) FROM companies WHERE email_status='done') AS companies_done"
+    ),
   ]);
   const [active, paused, started, lastTick, regs] = await Promise.all([
     getState(env, "active"),
@@ -96,14 +104,21 @@ async function progress(env: Env) {
     filings: { total: num(fil?.total), parsed: num(fil?.parsed), incomplete: num(fil?.incomplete) },
     companies: { total: num(comp?.total), enriched: num(comp?.enriched), with_website: num(comp?.with_website) },
     officers: { total: num(off?.total), top3: num(off?.top3) },
+    emails: { verified: num(eml?.verified), with_any: num(eml?.with_any), companies_done: num(eml?.companies_done) },
   };
 }
 const num = (v: any) => Number(v ?? 0);
 
 // --- contacts (top-3 officers + company) ----------------------------------- //
+// `email` = a scraped/verified address; `guessed_email` = the best unverified
+// pattern (lowest id = highest-priority template, since patterns are inserted in
+// priority order). Both are per-officer correlated subqueries.
 const CONTACTS_SQL =
-  "SELECT c.cik, c.name AS company, c.website, c.state, f1.regulation, f1.form_type, f1.filing_date, " +
-  "o.first, o.last, o.role, o.role_priority, o.source_accession, o.source_type " +
+  "SELECT c.cik, c.name AS company, c.website, c.domain, c.domain_verified, c.state, " +
+  "f1.regulation, f1.form_type, f1.filing_date, " +
+  "o.first, o.last, o.role, o.role_priority, o.source_accession, o.source_type, " +
+  "(SELECT e.address FROM emails e WHERE e.officer_id=o.id AND e.verification_status='verified' ORDER BY e.id LIMIT 1) AS email, " +
+  "(SELECT e.address FROM emails e WHERE e.officer_id=o.id AND e.verification_status!='verified' ORDER BY e.id LIMIT 1) AS guessed_email " +
   "FROM officers o JOIN companies c ON c.cik=o.cik " +
   "LEFT JOIN filings f1 ON f1.accession=o.source_accession " +
   "WHERE o.is_top_3=1 ORDER BY o.cik, o.rank LIMIT ?";
@@ -130,7 +145,7 @@ async function exportCsv(env: Env): Promise<Response> {
     lines.push(
       [
         r.company, r.cik, r.regulation, r.form_type, r.filing_date,
-        r.first, r.last, r.role, "", "", edgarUrl, r.source_type,
+        r.first, r.last, r.role, r.email ?? "", r.guessed_email ?? "", edgarUrl, r.source_type,
       ]
         .map(csvCell)
         .join(",")

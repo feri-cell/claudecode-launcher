@@ -12,6 +12,11 @@ export const EFTS_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index";
 export const EFTS_PAGE_SIZE = 100;
 export const EFTS_RESULT_CAP = 10_000;
 
+// Generic browser UA for non-SEC fetches (company homepages). The EDGAR contact
+// UA is only appropriate on sec.gov; many corporate sites 403 unknown agents.
+const EXTERNAL_UA =
+  "Mozilla/5.0 (compatible; MSC-EDGAR-Enrichment/1.0; +https://manhattanstreetcapital.com)";
+
 export class Budget {
   remaining: number;
   constructor(max: number) {
@@ -81,6 +86,59 @@ export class EdgarClient {
   async getText(url: string): Promise<string> {
     const r = await this.raw(url, "*/*");
     return r.text();
+  }
+
+  // --- Layer 4 helpers: non-EDGAR fetches ---------------------------------- //
+  // Company sites and DNS-over-HTTPS aren't SEC, so they don't carry the EDGAR
+  // contact UA — but they DO count against the per-tick request budget and the
+  // Worker's subrequest cap, so they spend the same Budget and pass the rate
+  // gate. Failures return null (best-effort) rather than aborting the tick.
+  async getExternalText(url: string, timeoutMs = 8000): Promise<string | null> {
+    if (this.budget.exhausted) return null;
+    await this.gate();
+    this.budget.spend();
+    this.fetched += 1;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, {
+        headers: { "User-Agent": EXTERNAL_UA, Accept: "text/html,*/*" },
+        redirect: "follow",
+        signal: ac.signal,
+        cf: { cacheTtl: 0 },
+      });
+      if (!resp.ok) return null;
+      const ct = resp.headers.get("content-type") || "";
+      if (ct && !/text|html|xml|json/i.test(ct)) return null; // skip binaries
+      return await resp.text();
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // True if `domain` has at least one MX record, resolved via Cloudflare DoH.
+  // This is our cheap "domain can receive mail" check — the Workers-native
+  // stand-in for the brief's dns.resolver MX lookup.
+  async hasMxRecord(domain: string, timeoutMs = 6000): Promise<boolean> {
+    if (this.budget.exhausted) return false;
+    await this.gate();
+    this.budget.spend();
+    this.fetched += 1;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const u = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=MX`;
+      const resp = await fetch(u, { headers: { Accept: "application/dns-json" }, signal: ac.signal });
+      if (!resp.ok) return false;
+      const j: any = await resp.json();
+      return Array.isArray(j?.Answer) && j.Answer.some((a: any) => a?.type === 15);
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // One EFTS page. Returns { total, relation, hits }.

@@ -35,7 +35,12 @@
     // so keep <=45 on free; raise to a few hundred on Workers Paid for a faster backfill.
     "MAX_REQUESTS_PER_TICK": "40",
     // Target requests/second to EDGAR (ceiling is 10/s per UA; we stay at 5).
-    "REQUESTS_PER_SECOND": "5"
+    "REQUESTS_PER_SECOND": "5",
+    // Layer 4 (email finding): companies to enrich per tick, and how many site
+    // pages to scrape per company for real mailto: addresses. Each company costs
+    // ~1 (MX) + EMAIL_SCRAPE_PAGES fetches against the per-tick request budget.
+    "EMAIL_PER_TICK": "3",
+    "EMAIL_SCRAPE_PAGES": "3"
   },
 
   "observability": { "enabled": true }

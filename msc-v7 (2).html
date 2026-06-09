@@ -427,7 +427,6 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
     <svg fill="currentColor" viewBox="0 0 20 20" style="width:13px;height:13px;"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
     Import CSV
   </button>
-  <button class="btn btn-primary" id="btn-edgar-live" onclick="mscLive(true)" style="display:none;">📡 EDGAR Live</button>
   <button class="btn btn-ghost" onclick="openScript()">Get Script</button>
   <button class="btn btn-ghost" id="btn-exp" style="display:none;" onclick="doExport()">Export</button>
   <button class="btn btn-primary" onclick="openAdd()">+ Add Contact</button>
@@ -439,19 +438,18 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
   <!-- ONBOARDING (hidden after import) -->
   <div id="onboard">
     <div class="import-hero">
-      <div class="ih-title">📡 Pull Live EDGAR Filings</div>
-      <div class="ih-sub">This dashboard is wired straight to the MSC EDGAR enrichment Worker — no Python script, no manual CSV. Pick the regulations, start the crawl, and contacts (names, roles, websites, and pattern-guessed / scraped emails) stream in automatically. Importing a CSV still works as a fallback.</div>
+      <div class="ih-title">📡 Import Live EDGAR Filings</div>
+      <div class="ih-sub">SEC EDGAR does not allow direct browser access. Use the Python script to fetch filings, then import the CSV here. All filtering, list management, and email outreach will work with your real data.</div>
       <div class="import-steps">
-        <div class="is-card"><div class="is-num">1</div><div class="is-title">Pick Regulations</div><div class="is-body">Choose <strong style="color:#fff;">Reg A+ / D / S / 144A</strong> (or all). The Worker discovers every matching filing on SEC EDGAR since each form's start year.</div></div>
-        <div class="is-card"><div class="is-num">2</div><div class="is-title">Start the Crawl</div><div class="is-body">A 1-minute cron advances discovery → company → officers → <strong style="color:#fff;">email finding</strong> in resumable, rate-limited ticks. Watch live progress.</div></div>
-        <div class="is-card"><div class="is-num">3</div><div class="is-title">Contacts Load Themselves</div><div class="is-body">As officers + emails surface they flow into the table, lists, and outreach sequences — the same UI you already use.</div></div>
+        <div class="is-card"><div class="is-num">1</div><div class="is-title">Get the Script</div><div class="is-body">Click <strong style="color:#fff;">"Get Script"</strong> in the toolbar. Downloads <code>edgar_fetch.py</code> — fetches all Reg A+, D, S, 144A filings since 2015.</div></div>
+        <div class="is-card"><div class="is-num">2</div><div class="is-title">Run It</div><div class="is-body">In Terminal: <code>cd ~/Downloads && python3 edgar_fetch.py</code><br>Or paste into <a href="https://colab.research.google.com" target="_blank">Google Colab</a> — no install needed.</div></div>
+        <div class="is-card"><div class="is-num">3</div><div class="is-title">Import Here</div><div class="is-body">Click <strong style="color:#fff;">"Import CSV"</strong> above. Large files (32MB+) load without freezing — chunked parser handles up to 200k rows.</div></div>
       </div>
       <div class="import-actions">
-        <button class="btn-hero" id="hero-edgar" onclick="mscLive(true)">📡 Pull from EDGAR</button>
-        <button class="btn-script" onclick="document.getElementById('csv-in').click()">📂 Import CSV instead</button>
-        <span style="font-size:11px;color:rgba(255,255,255,.3);margin-left:6px;">or drag a CSV anywhere on the page</span>
+        <button class="btn-hero" onclick="document.getElementById('csv-in').click()">📂 Import EDGAR CSV</button>
+        <button class="btn-script" onclick="openScript()">📄 Get Python Script</button>
+        <span style="font-size:11px;color:rgba(255,255,255,.3);margin-left:6px;">or drag CSV anywhere on page</span>
       </div>
-      <div id="hero-offline" style="display:none;font-size:11px;color:var(--amber);margin-top:10px;">⚠ EDGAR API not reachable — this page isn't being served by the Worker. Import a CSV, or open the dashboard at its <code>*.workers.dev</code> URL.</div>
     </div>
   </div>
 
@@ -2116,189 +2114,6 @@ renderTemplates();
 renderSeq();
 renderNamedLists();
 refreshListDropdowns();
-</script>
-
-<!-- ═══ EDGAR LIVE ENRICHMENT (wired to the Cloudflare Worker /api/*) ═══ -->
-<div id="msc-live" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(13,27,62,.45);backdrop-filter:blur(2px);" onclick="if(event.target===this)mscLive(false)">
-  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(620px,94vw);max-height:92vh;overflow:auto;background:var(--surface);border:1px solid var(--bdr-md);border-radius:var(--rlg);box-shadow:var(--sh-lg);font-family:var(--f);">
-    <div style="display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--bdr);">
-      <div style="font-family:var(--fh);font-weight:600;font-size:16px;color:var(--t1);flex:1;">📡 EDGAR Live Enrichment</div>
-      <span id="msc-conn" class="" style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid var(--bdr-md);color:var(--t2);">connecting…</span>
-      <button class="btn btn-ghost btn-xs" onclick="mscLive(false)">✕</button>
-    </div>
-
-    <div style="padding:18px 20px;">
-      <div style="font-size:12px;color:var(--t2);margin-bottom:8px;">Regulations to crawl</div>
-      <div id="msc-regs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
-        <label class="msc-chk"><input type="checkbox" value="ALL" checked onchange="mscRegToggle(this)"> All</label>
-        <label class="msc-chk"><input type="checkbox" value="D"> Reg D</label>
-        <label class="msc-chk"><input type="checkbox" value="A+"> Reg A+</label>
-        <label class="msc-chk"><input type="checkbox" value="S"> Reg S</label>
-        <label class="msc-chk"><input type="checkbox" value="144A"> Rule 144A</label>
-      </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:18px;">
-        <button class="btn btn-primary" id="msc-start" onclick="mscEnrich()">▶ Start enrichment</button>
-        <button class="btn btn-ghost" id="msc-pause" onclick="mscPause()">⏸ Pause</button>
-        <button class="btn btn-ghost" id="msc-load" onclick="mscLoadCsv(false)">↓ Load contacts into dashboard</button>
-        <label class="msc-chk" style="margin-left:auto;"><input type="checkbox" id="msc-auto" checked> auto-load</label>
-      </div>
-
-      <div id="msc-stages" style="display:grid;gap:12px;">
-        <div class="msc-stage" data-k="discovery" data-c="var(--blue)"><div class="msc-st-top"><span>1 · Discovery <span style="color:var(--t3);">EFTS → filings</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
-        <div class="msc-stage" data-k="companies" data-c="var(--gold)"><div class="msc-st-top"><span>2 · Company enrichment <span style="color:var(--t3);">submissions JSON</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
-        <div class="msc-stage" data-k="officers" data-c="var(--purple)"><div class="msc-st-top"><span>3 · Officer extraction <span style="color:var(--t3);">Form D XML + HTML</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
-        <div class="msc-stage" data-k="emails" data-c="var(--green)"><div class="msc-st-top"><span>4 · Email finding <span style="color:var(--t3);">domain · pattern · mailto scrape</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
-      </div>
-
-      <div style="font-size:11px;color:var(--t3);margin-top:14px;line-height:1.5;">
-        A 1-minute cron advances the backfill in resumable, rate-limited ticks. <strong>Verified</strong> emails come from scraping the company site for <code>mailto:</code> matches; everything else is a flagged pattern guess (<span style="color:var(--amber);">~</span>). SMTP probing isn't possible on Cloudflare Workers.
-      </div>
-    </div>
-  </div>
-</div>
-<style>
-  .msc-chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--t1);background:var(--bg);border:1px solid var(--bdr);border-radius:var(--rsm);padding:5px 10px;cursor:pointer;}
-  .msc-chk input{accent-color:var(--blue);}
-  .msc-stage{background:var(--bg);border:1px solid var(--bdr);border-radius:var(--r);padding:10px 12px;}
-  .msc-st-top{display:flex;justify-content:space-between;font-size:12.5px;color:var(--t1);margin-bottom:7px;font-weight:500;}
-  .msc-st-meta{color:var(--t2);font-variant-numeric:tabular-nums;font-weight:400;}
-  .msc-bar{height:8px;border-radius:5px;background:var(--bdr);overflow:hidden;}
-  .msc-bar > i{display:block;height:100%;width:0;background:var(--blue);transition:width .4s ease;}
-  #msc-conn.ok{color:var(--green);border-color:var(--green-bd);background:var(--green-bg);}
-  #msc-conn.live{color:var(--blue);border-color:var(--blue-bd);background:var(--blue-bg);}
-  #msc-conn.paused{color:var(--amber);border-color:var(--amber-bd);background:var(--amber-bg);}
-  #msc-conn.off{color:var(--red);border-color:var(--red-bd);background:var(--red-bg);}
-</style>
-<script>
-/* ══ EDGAR Live — drives the Worker /api/* endpoints and feeds contacts into
-      the existing CSV import pipeline (parseChunked) so the whole dashboard
-      lights up with zero manual steps. ══ */
-const mscState = { open:false, timer:null, lastTop3:-1, lastLoad:0, online:false };
-
-async function mscApi(path, opts){
-  const r = await fetch(path, opts);
-  if(!r.ok) throw new Error('HTTP '+r.status);
-  return r;
-}
-
-function mscRegToggle(box){
-  // "All" is mutually exclusive with the specific regs.
-  const boxes = [...document.querySelectorAll('#msc-regs input')];
-  if(box.value==='ALL' && box.checked) boxes.forEach(b=>{ if(b.value!=='ALL') b.checked=false; });
-  else if(box.value!=='ALL' && box.checked) boxes.find(b=>b.value==='ALL').checked=false;
-}
-document.querySelectorAll('#msc-regs input').forEach(b=>{ if(b.value!=='ALL') b.addEventListener('change',()=>mscRegToggle(b)); });
-
-function mscSelectedRegs(){
-  const checked = [...document.querySelectorAll('#msc-regs input:checked')].map(b=>b.value);
-  if(!checked.length || checked.includes('ALL')) return ['ALL'];
-  return checked;
-}
-
-function mscLive(show){
-  mscState.open = show;
-  ck('msc-live').style.display = show ? 'block' : 'none';
-  if(show){ mscPoll(); }
-}
-
-async function mscEnrich(){
-  const regs = mscSelectedRegs();
-  const btn = ck('msc-start'); btn.disabled = true; btn.textContent = '… starting';
-  try{
-    await mscApi('/api/enrich',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({regs})});
-    toast('EDGAR crawl started — contacts will stream in');
-  }catch(e){ toast('Could not start crawl: '+e.message,'err'); }
-  finally{ btn.disabled=false; btn.textContent='▶ Start enrichment'; }
-  mscPoll();
-}
-
-async function mscPause(){
-  try{ await mscApi('/api/stop',{method:'POST'}); toast('Crawl paused'); }
-  catch(e){ toast('Pause failed: '+e.message,'err'); }
-  mscPoll();
-}
-
-function mscSetStage(k, done, total, label){
-  const el = document.querySelector(`.msc-stage[data-k="${k}"]`); if(!el) return;
-  const pct = total>0 ? Math.min(100, Math.round(done/total*100)) : 0;
-  const fill = el.querySelector('.msc-bar > i');
-  fill.style.width = pct+'%';
-  fill.style.background = el.dataset.c;
-  el.querySelector('.msc-st-meta').textContent = label;
-}
-
-async function mscPoll(){
-  if(mscState.timer){ clearTimeout(mscState.timer); mscState.timer=null; }
-  let p;
-  try{ p = await (await mscApi('/api/progress')).json(); mscState.online=true; }
-  catch(e){ mscState.online=false; mscConn('off','offline'); return; }
-
-  mscConn(p.paused?'paused':p.active?'live':'ok',
-          p.paused?'paused':p.active?'crawling…':'idle'+(p.discovery.total?' · caught up':''));
-
-  const f=(n)=>(n??0).toLocaleString();
-  mscSetStage('discovery', p.discovery.done, p.discovery.total,
-              `${f(p.discovery.done)}/${f(p.discovery.total)} windows · ${f(p.filings.total)} filings`);
-  mscSetStage('companies', p.companies.enriched, p.companies.total,
-              `${f(p.companies.enriched)}/${f(p.companies.total)} · ${f(p.companies.with_website)} w/ site`);
-  mscSetStage('officers', p.filings.parsed+p.filings.incomplete, p.filings.total,
-              `${f(p.filings.parsed)} parsed · ${f(p.officers.top3)} top-3`);
-  const em=p.emails||{verified:0,with_any:0};
-  mscSetStage('emails', em.with_any, p.officers.top3,
-              `${f(em.with_any)}/${f(p.officers.top3)} addressed · ${f(em.verified)} verified`);
-
-  // Auto-load new contacts (debounced; parseChunked preserves prior edits).
-  const auto = ck('msc-auto') && ck('msc-auto').checked;
-  if(auto && p.officers.top3>0 && p.officers.top3!==mscState.lastTop3 && Date.now()-mscState.lastLoad>15000){
-    mscLoadCsv(true);
-  }
-  mscState.lastTop3 = p.officers.top3;
-
-  // Keep polling while the panel is open or a crawl is active.
-  if(mscState.open || p.active){
-    mscState.timer = setTimeout(mscPoll, mscState.open?2500:12000);
-  }
-}
-
-function mscConn(cls, txt){
-  const el = ck('msc-conn'); if(!el) return;
-  el.className = cls; el.textContent = txt;
-}
-
-async function mscLoadCsv(silent){
-  try{
-    const txt = await (await mscApi('/api/export.csv')).text();
-    const firstNL = txt.indexOf('\n');
-    if(firstNL<0 || !txt.slice(firstNL+1).trim()){
-      if(!silent) toast('No contacts yet — start the crawl first','err');
-      return;
-    }
-    mscState.lastLoad = Date.now();
-    parseChunked(txt);                 // existing pipeline: resets + rebuilds dashboard
-    if(!silent) mscLive(false);
-  }catch(e){ if(!silent) toast('Load failed: '+e.message,'err'); }
-}
-
-/* On load: detect whether we're served by the Worker; toggle the live controls
-   and pull existing contacts in automatically. */
-async function mscBoot(){
-  try{
-    const p = await (await fetch('/api/progress')).json();
-    mscState.online = true;
-    ck('btn-edgar-live').style.display = 'inline-flex';
-    const off = ck('hero-offline'); if(off) off.style.display='none';
-    if(p.officers && p.officers.top3>0 && !dataLoaded){ mscLoadCsv(true); }
-    if(p.active){ mscPoll(); }
-  }catch(e){
-    // Not served by the Worker (e.g. opened as a local file) — hide live button.
-    ck('btn-edgar-live').style.display = 'none';
-    const off = ck('hero-offline'), hero = ck('hero-edgar');
-    if(off) off.style.display='block';
-    if(hero){ hero.textContent='📂 Import EDGAR CSV'; hero.setAttribute('onclick',"document.getElementById('csv-in').click()"); }
-  }
-}
-mscBoot();
 </script>
 </body>
 </html>
