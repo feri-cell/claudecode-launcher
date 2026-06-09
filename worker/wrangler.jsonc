@@ -49,7 +49,13 @@
     // tier: at most SEARCH_MAX_PER_TICK lookups/tick and SEARCH_MONTHLY_CAP/month.
     "SEARCH_PROVIDER": "brave",
     "SEARCH_MONTHLY_CAP": "1800",
-    "SEARCH_MAX_PER_TICK": "1"
+    "SEARCH_MAX_PER_TICK": "1",
+    // HTTPS email verification (optional; VERIFY_API_KEY is a wrangler secret).
+    // Verifalia free tier ≈ 25/day, so daily cap 24 / monthly 740 keeps it free.
+    "VERIFY_API_PROVIDER": "verifalia",
+    "VERIFY_API_DAILY_CAP": "24",
+    "VERIFY_API_MONTHLY_CAP": "740",
+    "VERIFY_API_PER_TICK": "1"
   },
 
   "observability": { "enabled": true }

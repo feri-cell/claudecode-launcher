@@ -147,6 +147,37 @@ export class EdgarClient {
     }
   }
 
+  // Like getExternalJson but exposes the HTTP status + Location header and accepts
+  // a method/body — needed for async APIs (e.g. Verifalia) that POST a job and
+  // return 202 + a poll URL. Spends the budget + rate gate. null on transport error.
+  async fetchExternalJson(
+    url: string,
+    init: { method?: string; headers?: Record<string, string>; body?: string } = {},
+    timeoutMs = 12000
+  ): Promise<{ status: number; json: any; location: string | null } | null> {
+    if (this.budget.exhausted) return null;
+    await this.gate();
+    this.budget.spend();
+    this.fetched += 1;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, {
+        method: init.method || "GET",
+        headers: { Accept: "application/json", ...(init.headers || {}) },
+        body: init.body,
+        signal: ac.signal,
+        cf: { cacheTtl: 0 },
+      });
+      const json = await resp.json().catch(() => null);
+      return { status: resp.status, json, location: resp.headers.get("location") };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // True if `domain` has at least one MX record, resolved via Cloudflare DoH.
   // This is our cheap "domain can receive mail" check — the Workers-native
   // stand-in for the brief's dns.resolver MX lookup.

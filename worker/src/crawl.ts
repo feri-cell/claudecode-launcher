@@ -355,6 +355,148 @@ async function resolveDomainViaSearch(
   return null;
 }
 
+// --- optional: HTTPS email-verification API (no port 25, free-tier capped) -- //
+// Cloudflare can't do SMTP, but several services verify over HTTPS — which the
+// Worker CAN call. This upgrades 'guessed'/'probable' candidates to
+// verified/invalid using a free-tier key, with a hard monthly cap so it never
+// tips into paid. Inert (returns 0) unless VERIFY_API_KEY is set. Supports
+// AbstractAPI (default), MailboxLayer, and Hunter — all have free tiers.
+async function verifyOneViaApi(
+  env: Env,
+  client: EdgarClient,
+  address: string
+): Promise<{ status: string; code: string } | null> {
+  const key = env.VERIFY_API_KEY;
+  if (!key) return null;
+  const provider = (env.VERIFY_API_PROVIDER || "abstract").toLowerCase();
+  const enc = encodeURIComponent(address);
+
+  // Verifalia — async, Basic auth (VERIFY_API_KEY = "username:password"). Submit
+  // one email; if it isn't done synchronously (202), poll the job once. One
+  // credit is consumed per submitted email (polling is free).
+  if (provider === "verifalia") {
+    const auth = "Basic " + btoa(key);
+    const submit = await client.fetchExternalJson(
+      "https://api.verifalia.com/v2.6/email-validations",
+      {
+        method: "POST",
+        headers: { Authorization: auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ entries: [{ inputData: address }] }),
+      }
+    );
+    if (!submit) return null;
+    let data = submit.json;
+    if (submit.status === 202) {
+      const id = data?.overview?.id;
+      if (!id) return null;
+      await new Promise((r) => setTimeout(r, 3500)); // give the job a moment
+      const poll = await client.fetchExternalJson(
+        `https://api.verifalia.com/v2.6/email-validations/${id}`,
+        { method: "GET", headers: { Authorization: auth } }
+      );
+      if (!poll || poll.status === 202) return null; // still pending — skip this round
+      data = poll.json;
+    }
+    const cls = data?.entries?.data?.[0]?.classification;
+    if (cls === "Deliverable") return { status: "verified", code: "verifalia_deliverable" };
+    if (cls === "Undeliverable") return { status: "invalid", code: "verifalia_undeliverable" };
+    return cls ? { status: "probable", code: `verifalia_${String(cls).toLowerCase()}` } : null;
+  }
+
+  let url: string;
+  let map: (j: any) => { status: string; code: string } | null;
+  if (provider === "mailboxlayer") {
+    url = `https://apilayer.net/api/check?access_key=${key}&email=${enc}&smtp=1&format=1`;
+    map = (j) => {
+      if (!j || j.format_valid === false) return { status: "invalid", code: "api_format" };
+      if (j.smtp_check === true && j.mx_found === true)
+        return j.catch_all === true
+          ? { status: "probable", code: "api_catchall" }
+          : { status: "verified", code: "api_smtp" };
+      if (j.smtp_check === false) return { status: "invalid", code: "api_smtp_fail" };
+      return { status: "probable", code: "api_unknown" };
+    };
+  } else if (provider === "hunter") {
+    url = `https://api.hunter.io/v2/email-verifier?email=${enc}&api_key=${key}`;
+    map = (j) => {
+      const s = j?.data?.status;
+      if (s === "valid") return { status: "verified", code: "api_valid" };
+      if (s === "invalid") return { status: "invalid", code: "api_invalid" };
+      return s ? { status: "probable", code: `api_${String(s).slice(0, 20)}` } : null;
+    };
+  } else {
+    url = `https://emailvalidation.abstractapi.com/v1/?api_key=${key}&email=${enc}`;
+    map = (j) => {
+      const d = j?.deliverability;
+      if (d === "DELIVERABLE") return { status: "verified", code: "api_deliverable" };
+      if (d === "UNDELIVERABLE") return { status: "invalid", code: "api_undeliverable" };
+      return d ? { status: "probable", code: "api_risky" } : null;
+    };
+  }
+  const j = await client.getExternalJson(url);
+  if (!j) return null;
+  try {
+    return map(j);
+  } catch {
+    return null;
+  }
+}
+
+async function stepVerifyApi(env: Env, client: EdgarClient, max: number): Promise<number> {
+  if (!env.VERIFY_API_KEY) return 0;
+  // Two hard caps so we never tip into paid: a monthly cap and (for providers
+  // like Verifalia whose free tier is per-day) a daily cap. Set each just under
+  // the provider's free allotment; 0 disables that cap.
+  const monthlyCap = Math.max(0, Number(env.VERIFY_API_MONTHLY_CAP) || 740);
+  const dailyCap = Math.max(0, Number(env.VERIFY_API_DAILY_CAP) || 24);
+  const month = nowIso().slice(0, 7);
+  const day = nowIso().slice(0, 10);
+  if ((await getState(env, "verify_api_month")) !== month) {
+    await setState(env, "verify_api_month", month);
+    await setState(env, "verify_api_count", "0");
+  }
+  if ((await getState(env, "verify_api_day")) !== day) {
+    await setState(env, "verify_api_day", day);
+    await setState(env, "verify_api_day_count", "0");
+  }
+  let used = Number((await getState(env, "verify_api_count")) || "0");
+  let dayUsed = Number((await getState(env, "verify_api_day_count")) || "0");
+  let room = Math.min(max, monthlyCap - used);
+  if (dailyCap > 0) room = Math.min(room, dailyCap - dayUsed);
+  if (room <= 0) return 0;
+  const rows = (
+    await env.DB.prepare(
+      "SELECT id, address FROM emails WHERE verification_status IN ('probable','guessed') AND response_code IS NULL " +
+        "ORDER BY (verification_status='probable') DESC, id LIMIT ?"
+    )
+      .bind(room)
+      .all<any>()
+  ).results;
+  const now = nowIso();
+  let done = 0;
+  for (const r of rows) {
+    if (client.budget.exhausted) break;
+    if (used >= monthlyCap || (dailyCap > 0 && dayUsed >= dailyCap)) break;
+    const v = await verifyOneViaApi(env, client, String(r.address));
+    used++;
+    dayUsed++;
+    await setState(env, "verify_api_count", String(used)); // monthly credit counter
+    await setState(env, "verify_api_day_count", String(dayUsed)); // daily credit counter
+    if (v) {
+      await env.DB.prepare(
+        "UPDATE emails SET verification_status=?, response_code=?, verified_at=? WHERE id=?"
+      )
+        .bind(v.status, v.code, v.status === "verified" ? now : null, r.id)
+        .run();
+    } else {
+      // Don't retry a failed lookup (avoid burning the tiny quota in a loop).
+      await env.DB.prepare("UPDATE emails SET response_code='api_error' WHERE id=?").bind(r.id).run();
+    }
+    done++;
+  }
+  return done;
+}
+
 // --- step 4: email finding ------------------------------------------------- //
 // Resolve a mail domain for each enriched company with top-3 officers, then emit
 // addresses graded by confidence:
@@ -644,9 +786,13 @@ export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }>
   // spend extra budget per row, so phase 1 overshot and drained everything before
   // email ran. Two separate budgets make the split hard — total stays ≤ maxReq.
   const reserve = Math.min(maxReq - 1, Math.max(0, Number(env.EMAIL_REQUEST_RESERVE) || 16));
-  const mainBudget = Math.max(1, maxReq - reserve);
+  // HTTPS email-verification (Verifalia etc.) gets a tiny dedicated budget when a
+  // key is set — a couple requests per email (submit + poll). Inert otherwise.
+  const verifyReserve = env.VERIFY_API_KEY ? Math.max(2, Number(env.VERIFY_API_REQUESTS_PER_TICK) || 3) : 0;
+  const mainBudget = Math.max(1, maxReq - reserve - verifyReserve);
   const mainClient = new EdgarClient(env, new Budget(mainBudget));
   let emailFetched = 0;
+  let verifyFetched = 0;
   try {
     // Phase 1 — round-robin discovery → officers → company on the main budget.
     // A failure in any one stage must not abort the tick.
@@ -673,12 +819,20 @@ export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }>
       didAny += await stepEmail(env, emailClient, emailMax).catch(() => 0);
       emailFetched = emailClient.fetched;
     }
+    // Phase 3 — HTTPS verification on its own tiny budget (≤ a few emails/tick;
+    // the real limit is the daily/monthly free-tier cap inside stepVerifyApi).
+    if (verifyReserve > 0) {
+      const verifyClient = new EdgarClient(env, new Budget(verifyReserve));
+      const verifyMax = Math.max(1, Number(env.VERIFY_API_PER_TICK) || 1);
+      didAny += await stepVerifyApi(env, verifyClient, verifyMax).catch(() => 0);
+      verifyFetched = verifyClient.fetched;
+    }
     if (didAny === 0) await setState(env, "active", "0"); // nothing left — caught up
   } finally {
     await setState(env, "last_tick_at", nowIso());
     await releaseLease(env);
   }
-  return { ran: true, fetched: mainClient.fetched + emailFetched };
+  return { ran: true, fetched: mainClient.fetched + emailFetched + verifyFetched };
 }
 
 // --- date helpers (YYYY-MM-DD, UTC) ---------------------------------------- //

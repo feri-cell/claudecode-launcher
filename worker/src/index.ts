@@ -20,6 +20,12 @@ export interface Env {
   SEARCH_PROVIDER?: string;          // 'brave' (default) | 'bing'
   SEARCH_MONTHLY_CAP?: string;       // hard monthly query cap to stay in free tier (default 1800)
   SEARCH_MAX_PER_TICK?: string;      // max search lookups per cron tick (default 1)
+  VERIFY_API_KEY?: string;           // optional: HTTPS email-verification key (Verifalia "user:pass" etc.); inert if unset
+  VERIFY_API_PROVIDER?: string;      // 'verifalia' | 'abstract' | 'mailboxlayer' | 'hunter'
+  VERIFY_API_DAILY_CAP?: string;     // free-tier daily cap (default 24; 0 disables) — Verifalia is ~25/day
+  VERIFY_API_MONTHLY_CAP?: string;   // free-tier monthly cap (default 740)
+  VERIFY_API_PER_TICK?: string;      // emails verified per tick (default 1)
+  VERIFY_API_REQUESTS_PER_TICK?: string; // request budget reserved for verify per tick (default 3)
 }
 
 // Allowed verdicts the external SMTP verifier may write back.
