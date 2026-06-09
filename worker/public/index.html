@@ -774,6 +774,14 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
           <option value="yes">Has email</option>
           <option value="no">No email</option>
         </select>
+        <select class="fi" id="l-tier" onchange="renderList()" title="Filter by email confidence / verification method">
+          <option value="all">All email statuses</option>
+          <option value="smtp">✓ SMTP-verified (live check)</option>
+          <option value="site">✓ Verified — on-site</option>
+          <option value="anyverified">✓ Any verified</option>
+          <option value="probable">~ Probable</option>
+          <option value="guessed">~ Guessed</option>
+        </select>
       </div>
 
       <!-- Bulk bar -->
@@ -1197,13 +1205,13 @@ function parseContacts(rows){
     // A user-confirmed (prev) or scraped email is 'verified'; otherwise inherit
     // the Worker's grade for the guessed address.
     const emailTier = realEmail ? 'verified' : (estat || (gemail ? 'guessed' : ''));
-    // How a 'verified' email was established: 'smtp' = live mailbox/SMTP check
-    // (Verifalia/RCPT), 'scraped' = published on the company site + name-matched,
-    // 'manual' = a user edit. Distinguishes a live deliverability check from the rest.
+    // How the verified email was established. Decide from the API's verified
+    // address + its response_code — NOT from whether we had an email before (that
+    // mislabeled every reloaded API email as "manual"). Only a user-supplied email
+    // the API doesn't have counts as manual.
     const verifyMethod = emailTier!=='verified' ? ''
-      : prev.email ? 'manual'
-      : /^(smtp|verifalia|api)/.test(ecode) ? 'smtp'
-      : 'scraped';
+      : email ? (/^(smtp|verifalia|api)/.test(ecode) ? 'smtp' : 'scraped')
+      : 'manual';
     DB.contacts[k] = {
       first: prev.first || fname,
       last:  prev.last  || lname,
@@ -1915,7 +1923,8 @@ function renderList(){
   const q  = (ck('l-q')?.value||'').toLowerCase();
   const r  = ck('l-reg')?.value||'all';
   const st = ck('l-st')?.value||'all';
-  const em = ck('l-em')?.value||'all';   // has-email filter
+  const em = ck('l-em')?.value||'all';     // has-email filter
+  const tier = ck('l-tier')?.value||'all'; // email status / verification method
 
   const rows = DB.rows.filter(row=>{
     if(r!=='all'&&row.reg!==r) return false;
@@ -1929,6 +1938,15 @@ function renderList(){
     // Has-email filter
     if(em==='yes' && !(c.email&&String(c.email).trim())) return false;
     if(em==='no'  &&  (c.email&&String(c.email).trim())) return false;
+    // Email-status / verification-method filter
+    if(tier!=='all'){
+      const t=c.email_tier, vm=c.verify_method;
+      if(tier==='smtp'        && vm!=='smtp') return false;
+      else if(tier==='site'   && !(t==='verified'&&vm!=='smtp')) return false;
+      else if(tier==='anyverified' && t!=='verified') return false;
+      else if(tier==='probable'    && t!=='probable') return false;
+      else if(tier==='guessed'     && t!=='guessed') return false;
+    }
     // Status filter
     if(st!=='all'&&c.list_status!==st) return false;
     if(q){const h=(row.co+row.cik+(c.first||'')+(c.last||'')+(c.email||'')).toLowerCase();if(!h.includes(q))return false;}
