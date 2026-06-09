@@ -743,7 +743,7 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
       <div class="row-hd" style="margin-bottom:8px;">
         <div>
           <div class="row-hd-t" id="lt-title">All Contacts</div>
-          <div class="row-hd-s" id="lt-sub">Every contact across all lists</div>
+          <div class="row-hd-s" id="lt-sub">Every loaded contact — filter or tick rows to add to a list</div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button class="btn btn-ghost btn-sm" onclick="expContacts()">Export</button>
@@ -768,6 +768,11 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
           <option value="contacted">Contacted</option>
           <option value="replied">Replied</option>
           <option value="unsubscribed">Unsubscribed</option>
+        </select>
+        <select class="fi" id="l-em" onchange="renderList()" title="Filter by whether the contact has an email">
+          <option value="all">Email: any</option>
+          <option value="yes">Has email</option>
+          <option value="no">No email</option>
         </select>
       </div>
 
@@ -1247,6 +1252,8 @@ function finishImport(){
     updateSidebar();
     if(typeof renderNamedLists==='function') renderNamedLists();
     if(typeof refreshListDropdowns==='function') refreshListDropdowns();
+    if(typeof updateListSidebarCounts==='function') updateListSidebarCounts();
+    if(typeof renderList==='function' && document.querySelector('.page.active')?.id==='page-list') renderList();
     persistState();
     window.mscSilent = false;
     return;
@@ -1269,6 +1276,8 @@ function finishImport(){
     setTimeout(buildCharts,120);
     if(typeof renderNamedLists==='function') renderNamedLists();
     if(typeof refreshListDropdowns==='function') refreshListDropdowns();
+    if(typeof updateListSidebarCounts==='function') updateListSidebarCounts();
+    if(typeof renderList==='function' && document.querySelector('.page.active')?.id==='page-list') renderList();
     persistState();
     toast(`${DB.rows.length.toLocaleString()} filings loaded`);
   },80);
@@ -1549,7 +1558,15 @@ function goPage(id){
   ['enrich','filings','out','list'].forEach(n=>ck('snav-'+n)?.classList.toggle('active',n===id));
   const t={enrich:'EDGAR Enrichment',filings:'SEC Filings Tracker',out:'Email Outreach',list:'Lists & Contacts'};
   ck('tb-title').textContent=t[id]||id;
-  if(id==='list'&&!listChartDone){buildListCharts();listChartDone=true;}
+  if(id==='list'){
+    // Always re-render from the current DB — contacts may have loaded since the
+    // page was last drawn (the old bug: list view was built once at init, before
+    // data arrived, and never refreshed on navigation).
+    if(typeof renderNamedLists==='function') renderNamedLists();
+    if(typeof renderList==='function') renderList();
+    if(typeof updateListSidebarCounts==='function') updateListSidebarCounts();
+    if(!listChartDone){buildListCharts();listChartDone=true;}
+  }
   if(id==='enrich'&&typeof mscPoll==='function'){mscPoll();}
 }
 function qReg(r){goPage('filings');regF=r;document.querySelectorAll('#reg-chips .chip').forEach(c=>c.classList.toggle('active',c.dataset.v===r));const dd=ck('f-reg');if(dd)dd.value=r;onF();}
@@ -1772,8 +1789,8 @@ function renameList(id, e){
 function renderNamedLists(){
   const panel = ck('named-lists-panel'); if(!panel) return;
 
-  // Update "All Contacts" count
-  const allCt = Object.values(DB.contacts).filter(c=>c.list_status||contactListIds(c).size>0).length;
+  // "All Contacts" = every loaded contact (not just list-organised ones).
+  const allCt = Object.keys(DB.contacts).length;
   const ctEl = ck('nlc-ct-all');
   if(ctEl) ctEl.textContent = allCt.toLocaleString()+' contacts';
   ck('nlc-all')?.classList.toggle('active-list', activeListId==='__all__');
@@ -1808,13 +1825,13 @@ function selectList(id){
   const name = listName(id);
   const titleEl = ck('lt-title'); if(titleEl) titleEl.textContent = name;
   const subEl = ck('lt-sub');
-  if(subEl) subEl.textContent = id==='__all__' ? 'Every contact across all lists' : `Contacts in "${name}"`;
+  if(subEl) subEl.textContent = id==='__all__' ? 'Every loaded contact — filter or tick rows to add to a list' : `Contacts in "${name}"`;
   renderNamedLists();
   renderList();
 }
 
 function updateListSidebarCounts(){
-  const allCt = Object.values(DB.contacts).filter(c=>c.list_status||(c.list_ids&&c.list_ids.size>0)).length;
+  const allCt = Object.keys(DB.contacts).length;
   ck('ct-l').textContent = allCt;
   const ctEl = ck('nlc-ct-all');
   if(ctEl) ctEl.textContent = allCt.toLocaleString()+' contacts';
@@ -1898,17 +1915,20 @@ function renderList(){
   const q  = (ck('l-q')?.value||'').toLowerCase();
   const r  = ck('l-reg')?.value||'all';
   const st = ck('l-st')?.value||'all';
+  const em = ck('l-em')?.value||'all';   // has-email filter
 
   const rows = DB.rows.filter(row=>{
     if(r!=='all'&&row.reg!==r) return false;
     const c = DB.contacts[ck_key(row.cik,row.reg)];
     if(!c) return false;
-    // List filter
-    if(activeListId==='__all__'){
-      if(!c.list_status&&(!c.list_ids||c.list_ids.size===0)) return false;
-    } else {
+    // List filter — "All Contacts" shows EVERY loaded contact; a named list
+    // shows only its members.
+    if(activeListId!=='__all__'){
       if(!c.list_ids?.has(activeListId)) return false;
     }
+    // Has-email filter
+    if(em==='yes' && !(c.email&&String(c.email).trim())) return false;
+    if(em==='no'  &&  (c.email&&String(c.email).trim())) return false;
     // Status filter
     if(st!=='all'&&c.list_status!==st) return false;
     if(q){const h=(row.co+row.cik+(c.first||'')+(c.last||'')+(c.email||'')).toLowerCase();if(!h.includes(q))return false;}
@@ -1917,7 +1937,12 @@ function renderList(){
 
   const tb = ck('l-body');
   if(!rows.length){
-    tb.innerHTML=`<tr><td colspan="9"><div class="empty"><div class="empty-ico">📋</div><div class="empty-t">No contacts in this list yet<br>Use the "+ Add" button on any filing row to add contacts</div></div></td></tr>`;
+    const msg = activeListId==='__all__'
+      ? (Object.keys(DB.contacts).length
+          ? 'No contacts match these filters'
+          : 'No contacts loaded yet — open EDGAR Enrichment and Start, or click ↻ Refresh')
+      : 'No contacts in this list yet<br>Tick rows in "All Contacts" (or the Filings tab) and use “Add to list”';
+    tb.innerHTML=`<tr><td colspan="9"><div class="empty"><div class="empty-ico">📋</div><div class="empty-t">${msg}</div></div></td></tr>`;
     return;
   }
 
