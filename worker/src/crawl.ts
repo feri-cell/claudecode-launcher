@@ -149,13 +149,14 @@ async function pendingWindowCount(env: Env): Promise<number> {
 
 async function stepDiscovery(env: Env, client: EdgarClient, skip: Set<number>): Promise<"ok" | "none"> {
   const skipList = skip.size ? ` AND id NOT IN (${[...skip].join(",")})` : "";
-  // Operating-company regs (Reg A+, S, 144A) are where real websites + verifiable
-  // emails live; Form D is a huge SPV/fund backlog with almost no email footprint.
-  // Process non-D windows FIRST so the pipeline reaches operating companies fast
-  // instead of grinding through ~half a million Form D filings before them.
+  // Regulation priority for discovery. Reg A+ is the primary target — its Form
+  // 1-A offering circulars reliably print the issuer's website (→ harvest → real,
+  // verifiable emails). Reg D is next (high volume, but SPV/fund-heavy with little
+  // email footprint), then S and 144A. This stops discovery from grinding through
+  // ~half a million Form D filings before ever reaching Reg A+.
   const w = await env.DB.prepare(
     `SELECT * FROM disco_windows WHERE status='pending'${skipList} ` +
-      `ORDER BY CASE WHEN regulation='D' THEN 1 ELSE 0 END, id LIMIT 1`
+      `ORDER BY CASE regulation WHEN 'A+' THEN 0 WHEN 'D' THEN 1 WHEN 'S' THEN 2 ELSE 3 END, id LIMIT 1`
   ).first<any>();
   if (!w) return "none";
 
@@ -478,10 +479,11 @@ async function stepVerifyApi(env: Env, client: EdgarClient, max: number): Promis
   const rows = (
     await env.DB.prepare(
       "SELECT id, address FROM (" +
-        "SELECT id, address, verification_status AS vs, " +
-        "ROW_NUMBER() OVER (PARTITION BY officer_id ORDER BY (verification_status='probable') DESC, id) AS rn " +
-        "FROM emails WHERE verification_status IN ('probable','guessed') AND response_code IS NULL" +
-        ") WHERE rn=1 ORDER BY (vs='probable') DESC, id LIMIT ?"
+        "SELECT e.id AS id, e.address AS address, e.verification_status AS vs, COALESCE(c.is_operating,0) AS op, " +
+        "ROW_NUMBER() OVER (PARTITION BY e.officer_id ORDER BY (e.verification_status='probable') DESC, e.id) AS rn " +
+        "FROM emails e JOIN companies c ON c.cik=e.cik " +
+        "WHERE e.verification_status IN ('probable','guessed') AND e.response_code IS NULL" +
+        ") WHERE rn=1 ORDER BY op DESC, (vs='probable') DESC, id LIMIT ?"
     )
       .bind(room)
       .all<any>()
