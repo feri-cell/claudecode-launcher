@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS companies (
     domain           TEXT,                      -- Layer 4: resolved mail domain (acme.com)
     domain_verified  INTEGER DEFAULT 0,         -- 1 if domain has an MX record
     email_status     TEXT,                      -- NULL = pending, 'done' = Layer 4 ran
+    is_operating     INTEGER,                   -- 1 operating co, 0 SPV/fund/shell, NULL unknown
+    email_pattern    TEXT,                      -- learned dominant local-part pattern (e.g. 'first.last')
     first_seen_at    TEXT,
     last_updated_at  TEXT
 );

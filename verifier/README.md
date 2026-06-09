@@ -69,6 +69,35 @@ Use that same string as `VERIFY_TOKEN` when running this script.
 | `PORT` | 25 | SMTP port |
 | `CONNECT_TIMEOUT_MS` | 10000 | per-connection timeout |
 
+## Run it as a service (systemd, on a port-25 host)
+
+```ini
+# /etc/systemd/system/msc-verifier.service
+[Unit]
+Description=MSC EDGAR SMTP verifier
+After=network-online.target
+
+[Service]
+Environment=API_BASE=https://msc-edgar.feri-0df.workers.dev
+Environment=VERIFY_TOKEN=REPLACE_ME
+Environment=MAIL_FROM=outreach@manhattanstreetcapital.com
+ExecStart=/usr/bin/node /opt/msc/verifier/verify.mjs --watch
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl enable --now msc-verifier
+journalctl -u msc-verifier -f
+```
+
+Providers that will open outbound 25 on request: Hetzner (dedicated), OVH,
+Scaleway, Contabo (ticket). Verify with `node verify.mjs --probe someone@gmail.com`
+before wiring the service — if it hangs, port 25 is blocked there.
+
 ## Notes / etiquette
 
 - One TCP connection per domain, reused across that domain's addresses (`RSET`

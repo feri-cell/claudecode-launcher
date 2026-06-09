@@ -36,10 +36,13 @@
     "MAX_REQUESTS_PER_TICK": "40",
     // Target requests/second to EDGAR (ceiling is 10/s per UA; we stay at 5).
     "REQUESTS_PER_SECOND": "5",
-    // Layer 4 (email finding): companies to enrich per tick, and how many site
-    // pages to scrape per company for real mailto: addresses. Each company costs
-    // ~1 (MX) + EMAIL_SCRAPE_PAGES fetches against the per-tick request budget.
-    "EMAIL_PER_TICK": "3",
+    // Layer 4 (email finding). EMAIL_REQUEST_RESERVE requests/tick are held back
+    // exclusively for email so it's never starved by discovery/officers/company;
+    // EMAIL_PER_TICK is just an upper bound on companies/tick (the reserve is the
+    // real limiter at ~2-4 requests/company). EMAIL_SCRAPE_PAGES = site pages
+    // scraped per trusted company for real mailto: addresses.
+    "EMAIL_PER_TICK": "40",
+    "EMAIL_REQUEST_RESERVE": "16",
     "EMAIL_SCRAPE_PAGES": "3"
   },
 

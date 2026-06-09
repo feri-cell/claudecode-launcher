@@ -10,11 +10,14 @@ export interface Env {
   USER_AGENT: string;
   MAX_REQUESTS_PER_TICK: string;
   REQUESTS_PER_SECOND: string;
-  EMAIL_PER_TICK?: string;     // companies to email-enrich per tick (default 3)
+  EMAIL_PER_TICK?: string;     // max companies to email-enrich per tick (default 40, budget-bound)
+  EMAIL_REQUEST_RESERVE?: string; // per-tick requests reserved for email finding (default 16)
   EMAIL_SCRAPE_PAGES?: string; // site pages to scrape per company (default 3)
   VERIFY_TOKEN?: string;       // shared secret for the external SMTP verifier (wrangler secret)
   INCREMENTAL_HOURS?: string;        // cadence for new-filings re-discovery (default 12)
   INCREMENTAL_OVERLAP_DAYS?: string; // lookback window for the incremental pass (default 10)
+  SEARCH_API_KEY?: string;           // optional: web-search key for domain discovery (inert if unset)
+  SEARCH_PROVIDER?: string;          // 'brave' (default) | 'bing'
 }
 
 // Allowed verdicts the external SMTP verifier may write back.
@@ -106,7 +109,7 @@ async function progress(env: Env) {
   const [win, fil, comp, off, eml] = await Promise.all([
     q("SELECT COUNT(*) AS total, SUM(status='done') AS done FROM disco_windows"),
     q("SELECT COUNT(*) AS total, SUM(status='parsed') AS parsed, SUM(status='incomplete') AS incomplete FROM filings"),
-    q("SELECT COUNT(*) AS total, SUM(status='enriched') AS enriched, SUM(website IS NOT NULL) AS with_website FROM companies"),
+    q("SELECT COUNT(*) AS total, SUM(status='enriched') AS enriched, SUM(website IS NOT NULL) AS with_website, SUM(is_operating=1) AS operating FROM companies"),
     q("SELECT COUNT(*) AS total, SUM(is_top_3=1) AS top3 FROM officers"),
     q(
       "SELECT (SELECT COUNT(*) FROM officers WHERE is_top_3=1 AND id IN (SELECT officer_id FROM emails WHERE verification_status='verified')) AS verified, " +
@@ -133,7 +136,7 @@ async function progress(env: Env) {
     last_tick_at: lastTick,
     discovery: { total: num(win?.total), done: num(win?.done) },
     filings: { total: num(fil?.total), parsed: num(fil?.parsed), incomplete: num(fil?.incomplete) },
-    companies: { total: num(comp?.total), enriched: num(comp?.enriched), with_website: num(comp?.with_website) },
+    companies: { total: num(comp?.total), enriched: num(comp?.enriched), with_website: num(comp?.with_website), operating: num(comp?.operating) },
     officers: { total: num(off?.total), top3: num(off?.top3) },
     emails: { verified: num(eml?.verified), probable: num(eml?.probable), invalid: num(eml?.invalid), smtp_checked: num(eml?.smtp_checked), with_any: num(eml?.with_any), companies_done: num(eml?.companies_done) },
   };
@@ -146,7 +149,7 @@ const num = (v: any) => Number(v ?? 0);
 // (pattern, weaker). `email` = the verified address; `guessed_email` = best
 // non-verified, preferring probable; `email_status` = the top tier present.
 const CONTACTS_SQL =
-  "SELECT c.cik, c.name AS company, c.website, c.domain, c.domain_verified, c.state, " +
+  "SELECT c.cik, c.name AS company, c.website, c.domain, c.domain_verified, c.state, c.is_operating, " +
   "f1.regulation, f1.form_type, f1.filing_date, " +
   "o.first, o.last, o.role, o.role_priority, o.source_accession, o.source_type, " +
   "(SELECT e.address FROM emails e WHERE e.officer_id=o.id AND e.verification_status='verified' ORDER BY e.id LIMIT 1) AS email, " +

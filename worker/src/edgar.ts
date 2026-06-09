@@ -118,6 +118,35 @@ export class EdgarClient {
     }
   }
 
+  // GET an external JSON API (e.g. a web-search provider for domain discovery)
+  // with custom headers. Spends the budget + passes the rate gate like any other
+  // outbound call. Returns null on any failure (best-effort).
+  async getExternalJson(
+    url: string,
+    headers: Record<string, string> = {},
+    timeoutMs = 8000
+  ): Promise<any | null> {
+    if (this.budget.exhausted) return null;
+    await this.gate();
+    this.budget.spend();
+    this.fetched += 1;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, {
+        headers: { Accept: "application/json", ...headers },
+        signal: ac.signal,
+        cf: { cacheTtl: 0 },
+      });
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // True if `domain` has at least one MX record, resolved via Cloudflare DoH.
   // This is our cheap "domain can receive mail" check — the Workers-native
   // stand-in for the brief's dns.resolver MX lookup.

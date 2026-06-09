@@ -501,6 +501,11 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
         <option value="filed">Filed / Pending</option>
         <option value="withdrawn">Withdrawn</option>
       </select>
+      <select class="fi" id="f-op" onchange="onF()" title="Operating companies vs SPVs / funds / shells">
+        <option value="all">All Entities</option>
+        <option value="op">Operating cos only</option>
+        <option value="spv">SPVs / funds only</option>
+      </select>
       <select class="fi" id="f-ls" onchange="onF()">
         <option value="all">All List Statuses</option>
         <option value="_none">Not in list</option>
@@ -1161,12 +1166,14 @@ function parseContacts(rows){
       ? 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK='+cik+'&type=&dateb=&owner=include&count=40'
       : '';
     const src    = r.source_type || 'edgar';
+    // Segmentation: 1 operating company, 0 SPV/fund/shell, null unknown.
+    const op     = (r.is_operating===1||r.is_operating===0) ? r.is_operating : null;
 
     const dedup = cik+'|'+reg+'|'+filed;
     if(seen.has(dedup)) continue;
     seen.add(dedup);
 
-    DB.rows.push({co,cik,reg,tier,filed,year:yr,status,src,eu});
+    DB.rows.push({co,cik,reg,tier,filed,year:yr,status,src,eu,op});
 
     const k      = ck_key(cik,reg);
     const prev   = prevContacts[k] || {};
@@ -1266,7 +1273,7 @@ function clearAll(){
    Only runs when filter sig changes.
    ══════════════════════════════════════ */
 function filterSig(){
-  return[regF,ck('f-q')?.value||'',ck('f-yf')?.value||'all',ck('f-yt')?.value||'all',ck('f-st')?.value||'all',ck('f-ls')?.value||'all',DB.sortK,DB.sortA].join('|');
+  return[regF,ck('f-q')?.value||'',ck('f-yf')?.value||'all',ck('f-yt')?.value||'all',ck('f-st')?.value||'all',ck('f-ls')?.value||'all',ck('f-op')?.value||'all',DB.sortK,DB.sortA].join('|');
 }
 
 function rebuildIdx(){
@@ -1278,6 +1285,7 @@ function rebuildIdx(){
   const reg = ck('f-reg')?.value||'all';   // new reg dropdown
   const em  = ck('f-em')?.value||'all';    // has-email filter
   const nm  = ck('f-nm')?.value||'all';    // has-name filter
+  const op  = ck('f-op')?.value||'all';    // operating vs SPV/fund segmentation
   const yfN = yf!=='all'?parseInt(yf):0;
   const ytN = yt!=='all'?parseInt(yt):9999;
   // sync reg dropdown with chip bar
@@ -1291,6 +1299,8 @@ function rebuildIdx(){
     if(yfN&&r.year<yfN) continue;
     if(ytN<9999&&r.year>ytN) continue;
     if(st!=='all'&&r.status!==st) continue;
+    if(op==='op'&&r.op!==1) continue;   // operating companies only
+    if(op==='spv'&&r.op!==0) continue;  // SPVs / funds / shells only
     const c = DB.contacts[ck_key(r.cik,r.reg)];
     const lSt = c?.list_status||null;
     if(ls==='_none'&&lSt!==null) continue;

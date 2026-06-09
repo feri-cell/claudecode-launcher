@@ -51,7 +51,7 @@ const ENTITY_SUFFIXES = new Set([
   "international", "global", "usa", "us", "the",
 ]);
 
-export function guessDomain(companyName: string | null | undefined): string | null {
+export function companySlug(companyName: string | null | undefined): string | null {
   if (!companyName) return null;
   // Drop a trailing "(CIK 000…)" suffix and punctuation, split into words.
   const cleaned = companyName.replace(/\(.*?\)/g, " ").replace(/[.,&/]+/g, " ");
@@ -62,8 +62,21 @@ export function guessDomain(companyName: string | null | undefined): string | nu
     words = words.slice(0, -1);
   }
   const slug = words.map(asciiFold).join("");
-  if (slug.length < 3) return null;
-  return slug + ".com";
+  return slug.length < 3 ? null : slug;
+}
+
+export function guessDomain(companyName: string | null | undefined): string | null {
+  const slug = companySlug(companyName);
+  return slug ? slug + ".com" : null;
+}
+
+// Alternate TLDs to try for a name-guessed domain, most likely first. The caller
+// MX-probes these in order and takes the first that can receive mail — most US
+// issuers are .com, so the common case is a single lookup.
+const GUESS_TLDS = ["com", "io", "co"];
+export function guessDomainCandidates(companyName: string | null | undefined): string[] {
+  const slug = companySlug(companyName);
+  return slug ? GUESS_TLDS.map((t) => `${slug}.${t}`) : [];
 }
 
 // --- 4b pattern generation ------------------------------------------------- //
@@ -107,6 +120,34 @@ export function generatePatterns(first: string, last: string, domain: string): E
     address: `${p.local}@${domain}`,
     pattern: p.pattern,
   }));
+}
+
+// Generate just one pattern's address for an officer (used once a company's
+// dominant pattern is known, so we emit a single high-confidence guess instead
+// of all eight). Returns null if that template needs a name part we don't have.
+export function generateForPattern(first: string, last: string, domain: string, pattern: string): EmailCandidate | null {
+  const hit = patternLocalParts(first, last).find((p) => p.pattern === pattern);
+  return hit ? { address: `${hit.local}@${domain}`, pattern } : null;
+}
+
+// Reverse-map a known address (e.g. one we scraped + matched to an officer) to
+// the template that produced it — the company's "dominant pattern". Later guesses
+// for that company can then use this single pattern, à la Hunter.io's per-domain
+// pattern model. Returns null if the local-part matches no template.
+export function patternOf(address: string, first: string, last: string): string | null {
+  const at = address.lastIndexOf("@");
+  // Normalize like the templates: fold accents + lowercase, but KEEP the `.`/`_`
+  // separators (asciiFold would strip them and collapse first.last → firstlast).
+  const local = (at >= 0 ? address.slice(0, at) : address)
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._]/g, "");
+  if (!local) return null;
+  for (const p of patternLocalParts(first, last)) {
+    if (p.local === local) return p.pattern;
+  }
+  return null;
 }
 
 // --- 4c Option C: scrape addresses out of a page --------------------------- //
@@ -211,3 +252,76 @@ export function pageMentionsCompany(html: string, name: string | null | undefine
 
 // Site paths worth scraping for contact addresses, homepage first.
 export const SCRAPE_PATHS = ["/", "/team", "/about", "/contact", "/leadership"];
+
+// --- website discovery from a filing document ------------------------------ //
+// Reg A+ / S-1 / F-1 offering documents almost always print the issuer's own
+// website (cover page or "Company Information" section). We already download
+// these docs for officer extraction, so harvesting the URL is FREE and is the
+// single biggest lever on email yield — most issuers leave the EDGAR submissions
+// `website` field blank. A URL is accepted only when its host is tied to the
+// company name, so we never grab a filing-agent, CDN, or boilerplate URL.
+const FILING_URL_RE = /https?:\/\/(?:www\.)?([a-z0-9][a-z0-9.\-]{2,80}\.[a-z]{2,24})/gi;
+
+// Hosts that show up in filings but are never the issuer's own site.
+const NON_ISSUER_HOST_RE =
+  /(^|\.)(sec\.gov|edgar-online\.com|sec\.report|xbrl\.org|w3\.org|schema\.org|fasb\.org|adobe\.com|microsoft\.com|apple\.com|google\.com|googleapis\.com|gstatic\.com|cloudflare\.com|amazonaws\.com|jquery\.com|bootstrapcdn\.com|fontawesome\.com|dfinsolutions\.com|toppanmerrill\.com|donnelley\.com|rrdonnelley\.com|broadridge\.com|globenewswire\.com|businesswire\.com|prnewswire\.com|linkedin\.com|twitter\.com|x\.com|facebook\.com|youtube\.com|instagram\.com|wikipedia\.org|bloomberg\.com)$/i;
+
+// True if `host` is on the never-the-issuer list (filing agents, CDNs, socials,
+// sec.gov…). Exposed so the search-API fallback can reuse the same exclusions.
+export function isNonIssuerHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^www\./, "");
+  return NON_ISSUER_HOST_RE.test(h) || /\.(?:gov|mil|edu)$/i.test(h);
+}
+
+// True if a hostname plausibly belongs to `name` — its registrable form contains
+// the company's full slug or a distinctive (≥4-char) token. Used to accept a
+// search result or harvested URL as the issuer's own domain.
+export function hostMatchesCompany(host: string, name: string | null | undefined): boolean {
+  const toks = companyTokens(name);
+  if (!toks.length) return false;
+  const hf = asciiFold(host);
+  const slug = toks.join("");
+  if (slug.length >= 5 && hf.includes(slug)) return true;
+  return toks.some((t) => t.length >= 4 && hf.includes(t));
+}
+
+export function extractWebsiteFromFiling(
+  html: string,
+  companyName: string | null | undefined
+): string | null {
+  if (!html) return null;
+  const toks = companyTokens(companyName); // distinctive name tokens, longest first
+  if (!toks.length) return null;
+  const slug = toks.join("");
+  // Scan the cover page and the tail (contact/footer) — bounded so huge docs
+  // don't blow the CPU budget.
+  const scan =
+    html.length > 800_000 ? html.slice(0, 400_000) + "\n" + html.slice(-400_000) : html;
+
+  const counts = new Map<string, number>();
+  for (const m of scan.matchAll(FILING_URL_RE)) {
+    let host = m[1].toLowerCase().replace(/\.+$/, "");
+    if (host.length < 4 || !host.includes(".")) continue;
+    if (/\.(?:gov|mil|edu)$/i.test(host)) continue;
+    if (NON_ISSUER_HOST_RE.test(host)) continue;
+    counts.set(host, (counts.get(host) || 0) + 1);
+  }
+  if (!counts.size) return null;
+
+  // Pick the host most clearly tied to the company name; frequency breaks ties.
+  let best: string | null = null;
+  let bestScore = -1;
+  for (const [host, freq] of counts) {
+    const hostFold = asciiFold(host);
+    let score = Math.min(freq, 50);
+    if (toks.some((t) => t.length >= 4 && hostFold.includes(t))) score += 1000;
+    if (slug.length >= 5 && hostFold.includes(slug)) score += 2000;
+    if (score > bestScore) {
+      bestScore = score;
+      best = host;
+    }
+  }
+  // Require a real name match (≥1000), never just "most frequent host".
+  if (!best || bestScore < 1000) return null;
+  return "https://" + best;
+}

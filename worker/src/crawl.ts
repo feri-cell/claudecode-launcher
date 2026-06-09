@@ -8,16 +8,21 @@
 import type { Env } from "./index";
 import { Budget, EdgarClient, EFTS_RESULT_CAP } from "./edgar";
 import { REGULATION_FORMS, formStartYear, parseHit } from "./discovery";
-import { submissionsUrl, parseSubmissions } from "./company";
+import { submissionsUrl, parseSubmissions, classifyOperating } from "./company";
 import { parseDocument } from "./officers";
 import { TOP_N_OFFICERS } from "./roles";
 import {
   domainFromWebsite,
-  guessDomain,
+  guessDomainCandidates,
   generatePatterns,
+  generateForPattern,
+  patternOf,
   extractEmailsAtDomain,
   matchOfficerEmail,
   pageMentionsCompany,
+  extractWebsiteFromFiling,
+  isNonIssuerHost,
+  hostMatchesCompany,
   SCRAPE_PATHS,
 } from "./email";
 
@@ -58,7 +63,7 @@ async function releaseLease(env: Env): Promise<void> {
 // The first remote D1 was created before the Layer 4 columns existed. D1 has no
 // "ADD COLUMN IF NOT EXISTS", so we run each ALTER once, guarded by a version
 // flag, and swallow the "duplicate column" error on DBs that already have them.
-const SCHEMA_VERSION = "3";
+const SCHEMA_VERSION = "4";
 const MIGRATIONS = [
   // v2 — Layer 4 email columns.
   "ALTER TABLE companies ADD COLUMN domain TEXT",
@@ -67,6 +72,10 @@ const MIGRATIONS = [
   // v3 — tag discovery windows so the incremental (new-filings-only) pass can be
   // distinguished from, and cleaned up independently of, the historical backfill.
   "ALTER TABLE disco_windows ADD COLUMN kind TEXT DEFAULT 'backfill'",
+  // v4 — segmentation (operating company vs SPV/fund/shell) so outreach lists
+  // aren't diluted, and the learned dominant email pattern per company.
+  "ALTER TABLE companies ADD COLUMN is_operating INTEGER",
+  "ALTER TABLE companies ADD COLUMN email_pattern TEXT",
 ];
 
 export async function migrate(env: Env): Promise<void> {
@@ -197,12 +206,13 @@ async function stepCompany(env: Env, client: EdgarClient, max: number): Promise<
     try {
       const j = await client.getJson(submissionsUrl(cik));
       const f = parseSubmissions(j);
+      const isOperating = classifyOperating(f.name, f.sic);
       await env.DB.prepare(
         "UPDATE companies SET name=COALESCE(?, name), sic=?, sic_description=?, state=?, " +
           "website=COALESCE(?, website), website_source=CASE WHEN ? IS NOT NULL THEN 'verified' ELSE website_source END, " +
-          "status='enriched', last_updated_at=? WHERE cik=?"
+          "is_operating=?, status='enriched', last_updated_at=? WHERE cik=?"
       )
-        .bind(f.name, f.sic, f.sicDescription, f.state, f.website, f.website, nowIso(), cik)
+        .bind(f.name, f.sic, f.sicDescription, f.state, f.website, f.website, isOperating, nowIso(), cik)
         .run();
     } catch {
       await env.DB.prepare("UPDATE companies SET status='enriched', last_updated_at=? WHERE cik=?")
@@ -218,7 +228,9 @@ async function stepCompany(env: Env, client: EdgarClient, max: number): Promise<
 async function stepOfficers(env: Env, client: EdgarClient, max: number): Promise<number> {
   const rows = (
     await env.DB.prepare(
-      "SELECT accession, cik, form_type, primary_doc FROM filings WHERE status='filed' ORDER BY filing_date DESC LIMIT ?"
+      "SELECT f.accession, f.cik, f.form_type, f.primary_doc, c.name, c.website " +
+        "FROM filings f JOIN companies c ON c.cik=f.cik " +
+        "WHERE f.status='filed' ORDER BY f.filing_date DESC LIMIT ?"
     )
       .bind(max)
       .all<any>()
@@ -231,6 +243,19 @@ async function stepOfficers(env: Env, client: EdgarClient, max: number): Promise
     const url = `https://www.sec.gov/Archives/edgar/data/${f.cik}/${nodash}/${doc}`;
     try {
       const content = await client.getText(url);
+      // Free win: harvest the issuer's own website from the document we just
+      // pulled (only if EDGAR didn't already disclose one). This feeds Layer 4's
+      // trusted-domain path and is the biggest lever on email yield.
+      if (!f.website) {
+        const site = extractWebsiteFromFiling(content, f.name);
+        if (site) {
+          await env.DB.prepare(
+            "UPDATE companies SET website=?, website_source='filing', last_updated_at=? WHERE cik=? AND website IS NULL"
+          )
+            .bind(site, nowIso(), Number(f.cik))
+            .run();
+        }
+      }
       const officers = parseDocument(f.form_type, content);
       if (officers.length) {
         await storeOfficers(env, Number(f.cik), String(f.accession), officers);
@@ -276,22 +301,73 @@ async function recomputeTop3(env: Env, cik: number): Promise<void> {
   if (stmts.length) await env.DB.batch(stmts);
 }
 
+// --- search-API domain discovery (optional, gated on SEARCH_API_KEY) ------- //
+// When a web-search key is configured, resolve a company's official domain by
+// searching "<name> official website" and taking the first organic result whose
+// host is tied to the company name and isn't a filing-agent/CDN/social. Inert
+// (returns null) when no key is set, so the build ships dormant until you supply
+// one. Supports Brave (default) and Bing.
+async function resolveDomainViaSearch(
+  env: Env,
+  client: EdgarClient,
+  name: string | null | undefined
+): Promise<string | null> {
+  const key = env.SEARCH_API_KEY;
+  if (!key || !name) return null;
+  const provider = (env.SEARCH_PROVIDER || "brave").toLowerCase();
+  const q = `${name} official website`;
+  let url: string;
+  let headers: Record<string, string>;
+  let pick: (j: any) => string[];
+  if (provider === "bing") {
+    url = `https://api.bing.microsoft.com/v7.0/search?count=5&responseFilter=Webpages&q=${encodeURIComponent(q)}`;
+    headers = { "Ocp-Apim-Subscription-Key": key };
+    pick = (j) => (j?.webPages?.value ?? []).map((r: any) => r?.url).filter(Boolean);
+  } else {
+    url = `https://api.search.brave.com/res/v1/web/search?count=5&q=${encodeURIComponent(q)}`;
+    headers = { "X-Subscription-Token": key };
+    pick = (j) => (j?.web?.results ?? []).map((r: any) => r?.url).filter(Boolean);
+  }
+  const j = await client.getExternalJson(url, headers);
+  if (!j) return null;
+  for (const u of pick(j)) {
+    try {
+      const host = new URL(u).hostname.toLowerCase().replace(/^www\./, "");
+      if (host.length < 4 || isNonIssuerHost(host)) continue;
+      if (hostMatchesCompany(host, name)) return host;
+    } catch {
+      /* skip malformed URL */
+    }
+  }
+  return null;
+}
+
 // --- step 4: email finding ------------------------------------------------- //
-// For each enriched company with top-3 officers that hasn't been emailed yet,
-// resolve a mail domain and TRUST it only when ownership is established:
-//   • a domain disclosed in the issuer's filing  → trusted outright, or
-//   • a name-guessed domain whose homepage actually mentions the company.
-// An MX record alone is NOT enough (any parked same-slug domain has one) — that
-// was the source of bad "verified" emails. Only on a trusted domain do we scrape
-// for real addresses (strict person-match → 'verified') and emit pattern guesses.
-// Untrusted/unknown → no addresses, just mark the company done.
+// Resolve a mail domain for each enriched company with top-3 officers, then emit
+// addresses graded by confidence:
+//   • verified — scraped off the site and strictly matched to the officer
+//   • probable — pattern on a domain whose ownership is CONFIRMED (a disclosed/
+//                filing-harvested/searched website, or a homepage that mentions
+//                the company) AND that has an MX record
+//   • guessed  — pattern on a name/search domain that merely has an MX record;
+//                the off-Worker SMTP verifier later promotes or kills these
+// Operating companies are processed before SPVs/funds (which rarely have any web
+// footprint). Once an officer's address is scraped+matched we learn the domain's
+// dominant local-part pattern and emit a single high-confidence guess for the
+// rest, instead of all eight templates (Hunter.io-style per-domain pattern).
 async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<number> {
+  // A company is email-able as soon as it has top-3 officers + a name — it does
+  // NOT need the separate company-enrichment step first. (Enrichment fills SIC /
+  // state and a website that EDGAR submissions almost never provides anyway; we
+  // harvest/guess the domain here regardless.) Gating on status='enriched' made
+  // the queue nearly empty, because officer extraction (newest filings first) and
+  // enrichment (lowest CIK first) advance over different companies.
   const companies = (
     await env.DB.prepare(
-      "SELECT cik, name, website FROM companies " +
-        "WHERE status='enriched' AND email_status IS NULL " +
+      "SELECT cik, name, website, email_pattern FROM companies " +
+        "WHERE email_status IS NULL AND name IS NOT NULL " +
         "AND EXISTS (SELECT 1 FROM officers o WHERE o.cik=companies.cik AND o.is_top_3=1) " +
-        "ORDER BY cik LIMIT ?"
+        "ORDER BY is_operating DESC, cik LIMIT ?"
     )
       .bind(max)
       .all<any>()
@@ -303,62 +379,148 @@ async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<nu
     if (client.budget.exhausted) break;
     const cik = Number(c.cik);
     try {
-      // 4a — pick a domain candidate. A filing-disclosed website is trusted; a
-      // name guess is only a candidate until its homepage confirms ownership.
-      const websiteDomain = domainFromWebsite(c.website);
-      const domain = websiteDomain || guessDomain(c.name);
-      const fromWebsite = !!websiteDomain;
+      const officers = (
+        await env.DB.prepare(
+          "SELECT id, first, last FROM officers WHERE cik=? AND is_top_3=1 ORDER BY rank"
+        )
+          .bind(cik)
+          .all<any>()
+      ).results;
 
-      let trusted = false;
-      let domainVerified = false;
+      let domain: string | null = null;
+      let trusted = false; // ownership established → safe to scrape + grade 'probable'
+      let domainVerified = false; // domain has an MX record
       const scraped: string[] = [];
 
-      if (domain) {
-        const home = await client.getExternalText(`https://${domain}/`);
-        if (fromWebsite) trusted = true; // issuer disclosed this domain
-        else if (home && pageMentionsCompany(home, c.name)) trusted = true; // guess confirmed
+      const scrapeExtraPages = async (d: string) => {
+        for (const path of SCRAPE_PATHS.slice(1, scrapePages)) {
+          if (client.budget.exhausted) break;
+          const html = await client.getExternalText(`https://${d}${path}`);
+          if (html) scraped.push(...extractEmailsAtDomain(html, d));
+        }
+      };
 
-        if (trusted) {
-          if (home) scraped.push(...extractEmailsAtDomain(home, domain));
-          domainVerified = await client.hasMxRecord(domain);
-          for (const path of SCRAPE_PATHS.slice(1, scrapePages)) {
-            if (client.budget.exhausted) break;
-            const html = await client.getExternalText(`https://${domain}${path}`);
-            if (html) scraped.push(...extractEmailsAtDomain(html, domain));
+      // Backfill the website for companies enriched before filing-harvest existed
+      // (or whose docs we'd already parsed): pull their latest filing doc once and
+      // harvest the issuer URL. New filings are harvested for free during officer
+      // parsing, so this only fires for companies that still have no website.
+      // Name-obvious SPVs/funds have no web/email footprint; don't spend the
+      // budget chasing one (no harvest fetch, no MX probes) — mark them done with
+      // no addresses so the budget goes to real operating companies.
+      const isSpvByName = classifyOperating(c.name, null) === 0;
+
+      let website: string | null = c.website;
+      if (!website && !isSpvByName && !client.budget.exhausted) {
+        // Only HTML offering docs carry a website; Form D is XML and never does,
+        // so skip it to avoid wasting a fetch.
+        const f = await env.DB.prepare(
+          "SELECT cik, accession, primary_doc FROM filings WHERE cik=? AND status='parsed' " +
+            "AND form_type NOT IN ('D','D/A') ORDER BY filing_date DESC LIMIT 1"
+        )
+          .bind(cik)
+          .first<any>();
+        if (f) {
+          const nodash = String(f.accession).replace(/-/g, "");
+          const doc = f.primary_doc || "primary_doc.xml";
+          const content = await client.getText(
+            `https://www.sec.gov/Archives/edgar/data/${f.cik}/${nodash}/${doc}`
+          ).catch(() => null);
+          if (content) {
+            const site = extractWebsiteFromFiling(content, c.name);
+            if (site) {
+              website = site;
+              await env.DB.prepare(
+                "UPDATE companies SET website=?, website_source='filing', last_updated_at=? WHERE cik=? AND website IS NULL"
+              )
+                .bind(site, nowIso(), cik)
+                .run();
+            }
           }
         }
       }
+
+      const websiteDomain = domainFromWebsite(website);
+      if (websiteDomain) {
+        // Disclosed / filing-harvested website → trusted outright.
+        domain = websiteDomain;
+        trusted = true;
+        domainVerified = await client.hasMxRecord(domain);
+        if (!client.budget.exhausted) {
+          const home = await client.getExternalText(`https://${domain}/`);
+          if (home) scraped.push(...extractEmailsAtDomain(home, domain));
+          await scrapeExtraPages(domain);
+        }
+      } else if (!isSpvByName) {
+        // Best candidate first: a web-search hit (if a key is configured), then
+        // name-guessed slugs across a few TLDs. Take the first with an MX record.
+        const searched = await resolveDomainViaSearch(env, client, c.name);
+        const cands: string[] = [];
+        if (searched) cands.push(searched);
+        for (const g of guessDomainCandidates(c.name)) if (!cands.includes(g)) cands.push(g);
+        for (const d of cands) {
+          if (client.budget.exhausted) break;
+          if (await client.hasMxRecord(d)) {
+            domain = d;
+            domainVerified = true;
+            break;
+          }
+        }
+        // Confirm ownership via the homepage to upgrade guessed → probable and
+        // trust scraped addresses.
+        if (domain && !client.budget.exhausted) {
+          const home = await client.getExternalText(`https://${domain}/`);
+          if (home && pageMentionsCompany(home, c.name)) {
+            trusted = true;
+            scraped.push(...extractEmailsAtDomain(home, domain));
+            await scrapeExtraPages(domain);
+          }
+        }
+      }
+
       const scrapedUniq = [...new Set(scraped)];
 
-      // Only attach addresses when the domain is trusted.
-      if (trusted && domain) {
-        const officers = (
-          await env.DB.prepare(
-            "SELECT id, first, last FROM officers WHERE cik=? AND is_top_3=1 ORDER BY rank"
-          )
-            .bind(cik)
-            .all<any>()
-        ).results;
-        const stmts: D1PreparedStatement[] = [];
-        const now = nowIso();
+      // Phase 1 — collect verified hits and learn the dominant pattern.
+      let learnedPattern: string | null = c.email_pattern || null;
+      const verifiedFor = new Map<number, string>();
+      if (trusted) {
         for (const o of officers) {
           const first = String(o.first || "");
           const last = String(o.last || "");
           const hit = matchOfficerEmail(scrapedUniq, first, last);
           if (hit) {
+            verifiedFor.set(Number(o.id), hit);
+            if (!learnedPattern) {
+              const p = patternOf(hit, first, last);
+              if (p) learnedPattern = p;
+            }
+          }
+        }
+      }
+
+      // Phase 2 — emit rows.
+      if (domain && officers.length) {
+        const guessStatus = trusted && domainVerified ? "probable" : "guessed";
+        const stmts: D1PreparedStatement[] = [];
+        const now = nowIso();
+        for (const o of officers) {
+          const first = String(o.first || "");
+          const last = String(o.last || "");
+          const v = verifiedFor.get(Number(o.id));
+          if (v) {
             stmts.push(
               env.DB.prepare(
                 "INSERT INTO emails (cik, officer_id, address, pattern, verification_status, response_code, verified_at) " +
                   "VALUES (?, ?, ?, 'scraped', 'verified', 'scraped_site', ?) " +
                   "ON CONFLICT(officer_id, address) DO UPDATE SET verification_status='verified', response_code='scraped_site', verified_at=excluded.verified_at"
-              ).bind(cik, o.id, hit, now)
+              ).bind(cik, o.id, v, now)
             );
           }
-          // Confidence grade for guesses (free, Worker-native): a pattern on an
-          // ownership-confirmed domain that can receive mail is 'probable';
-          // without MX it's only 'guessed'. (Scraped hits above are 'verified'.)
-          const guessStatus = domainVerified ? "probable" : "guessed";
-          for (const cand of generatePatterns(first, last, domain)) {
+          // If the dominant pattern is known, emit just that one (high-confidence);
+          // otherwise emit the standard ranked set for the verifier to probe.
+          const cands = learnedPattern
+            ? ([generateForPattern(first, last, domain, learnedPattern)].filter(Boolean) as { address: string; pattern: string }[])
+            : generatePatterns(first, last, domain);
+          for (const cand of cands) {
             stmts.push(
               env.DB.prepare(
                 "INSERT INTO emails (cik, officer_id, address, pattern, verification_status) VALUES (?, ?, ?, ?, ?) " +
@@ -370,12 +532,13 @@ async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<nu
         if (stmts.length) await env.DB.batch(stmts);
       }
 
-      // Persist the resolved domain only when trusted (so the CSV domain column
-      // never shows a bogus same-slug site).
+      // Name-only operating fallback for rows stepCompany left unclassified.
+      const opFallback = classifyOperating(c.name, null);
       await env.DB.prepare(
-        "UPDATE companies SET domain=?, domain_verified=?, email_status='done', last_updated_at=? WHERE cik=?"
+        "UPDATE companies SET domain=?, domain_verified=?, email_pattern=COALESCE(?, email_pattern), " +
+          "is_operating=COALESCE(is_operating, ?), email_status='done', last_updated_at=? WHERE cik=?"
       )
-        .bind(trusted ? domain : null, domainVerified ? 1 : 0, nowIso(), cik)
+        .bind(domain, domainVerified ? 1 : 0, learnedPattern, opFallback, nowIso(), cik)
         .run();
     } catch (e) {
       // Don't let one company wedge the queue; mark done with no addresses.
@@ -388,6 +551,8 @@ async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<nu
   }
   return done;
 }
+
+
 
 // --- incremental re-discovery (new filings only) --------------------------- //
 // The historical backfill seeds yearly windows up to the current year; once they
@@ -453,35 +618,46 @@ export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }>
   await migrate(env);
   await maybeSeedIncremental(env).catch(() => {}); // never let this abort a tick
   const maxReq = Math.max(1, Number(env.MAX_REQUESTS_PER_TICK) || 40);
-  const client = new EdgarClient(env, new Budget(maxReq));
+  // Give email finding its OWN budget so it can never be starved by
+  // discovery/officers/company. A soft reserve didn't hold: EDGAR 429/5xx retries
+  // spend extra budget per row, so phase 1 overshot and drained everything before
+  // email ran. Two separate budgets make the split hard — total stays ≤ maxReq.
+  const reserve = Math.min(maxReq - 1, Math.max(0, Number(env.EMAIL_REQUEST_RESERVE) || 16));
+  const mainBudget = Math.max(1, maxReq - reserve);
+  const mainClient = new EdgarClient(env, new Budget(mainBudget));
+  let emailFetched = 0;
   try {
-    // Round-robin the three stages so officers/contacts surface in the first
-    // tick instead of waiting for the entire backfill's discovery to finish.
+    // Phase 1 — round-robin discovery → officers → company on the main budget.
     // A failure in any one stage must not abort the tick.
     const skip = new Set<number>(); // windows that failed this tick
-    while (!client.budget.exhausted) {
+    let didAny = 0;
+    while (!mainClient.budget.exhausted) {
       let did = 0;
-      for (let i = 0; i < 5 && !client.budget.exhausted; i++) {
-        const r = await stepDiscovery(env, client, skip).catch(() => "ok" as const);
+      for (let i = 0; i < 5 && !mainClient.budget.exhausted; i++) {
+        const r = await stepDiscovery(env, mainClient, skip).catch(() => "ok" as const);
         if (r === "none") break;
         did++;
       }
-      if (!client.budget.exhausted) did += await stepOfficers(env, client, 8).catch(() => 0);
-      if (!client.budget.exhausted) did += await stepCompany(env, client, 12).catch(() => 0);
-      // Email is the lowest-priority stage: a small slice each round so contacts
-      // gain addresses during the backfill without starving discovery/officers.
-      const emailMax = Math.max(1, Number(env.EMAIL_PER_TICK) || 3);
-      if (!client.budget.exhausted) did += await stepEmail(env, client, emailMax).catch(() => 0);
-      if (did === 0) {
-        await setState(env, "active", "0"); // nothing left — backfill caught up
-        break;
-      }
+      if (!mainClient.budget.exhausted) did += await stepOfficers(env, mainClient, 8).catch(() => 0);
+      if (!mainClient.budget.exhausted) did += await stepCompany(env, mainClient, 12).catch(() => 0);
+      didAny += did;
+      if (did === 0) break;
     }
+    // Phase 2 — email finding on its own budget: the reserve PLUS whatever phase 1
+    // left unspent (so a caught-up backfill pours its whole budget into email).
+    const emailBudget = reserve + mainClient.budget.remaining;
+    const emailMax = Math.max(1, Number(env.EMAIL_PER_TICK) || 40);
+    if (emailBudget > 0) {
+      const emailClient = new EdgarClient(env, new Budget(emailBudget));
+      didAny += await stepEmail(env, emailClient, emailMax).catch(() => 0);
+      emailFetched = emailClient.fetched;
+    }
+    if (didAny === 0) await setState(env, "active", "0"); // nothing left — caught up
   } finally {
     await setState(env, "last_tick_at", nowIso());
     await releaseLease(env);
   }
-  return { ran: true, fetched: client.fetched };
+  return { ran: true, fetched: mainClient.fetched + emailFetched };
 }
 
 // --- date helpers (YYYY-MM-DD, UTC) ---------------------------------------- //
