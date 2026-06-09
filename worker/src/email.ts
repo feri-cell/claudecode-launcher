@@ -128,24 +128,85 @@ export function extractEmailsAtDomain(html: string, domain: string): string[] {
   return [...found];
 }
 
-// Decide whether a scraped address belongs to a specific officer. We require the
-// surname (folded, ≥3 chars) to appear in the local-part, or an exact match to
-// one of that officer's generated pattern local-parts. This deliberately rejects
-// role mailboxes like info@/contact@ — better blank than a wrong "verified".
+// Role / generic mailboxes that must never be matched to a person. A scraped
+// address whose folded local-part is one of these is rejected outright.
+const ROLE_LOCALPARTS = new Set([
+  "info", "contact", "contactus", "sales", "support", "help", "hello", "hi",
+  "admin", "office", "mail", "email", "team", "press", "media", "marketing",
+  "careers", "jobs", "hr", "recruiting", "legal", "compliance", "privacy",
+  "investors", "investor", "ir", "ventures", "general", "inquiries", "enquiries",
+  "service", "services", "customerservice", "billing", "accounts", "accounting",
+  "finance", "noreply", "donotreply", "webmaster", "postmaster", "abuse",
+  "newsletter", "subscribe", "events", "partnerships", "partner", "bd",
+]);
+
+// Local-parts that combine BOTH the first and last name. Matching one of these
+// exactly is the only basis for treating a scraped address as a person's — the
+// weak `first`-only / `last`-only templates are deliberately excluded, since
+// `john@` or `smith@` could belong to anyone at the domain.
+export function strongLocalParts(first: string, last: string): Set<string> {
+  const f = asciiFold(first), l = asciiFold(last);
+  const fi = f.slice(0, 1), li = l.slice(0, 1);
+  const s = new Set<string>();
+  if (f && l) {
+    s.add(`${f}.${l}`); s.add(`${f}_${l}`); s.add(`${f}${l}`);
+    s.add(`${fi}${l}`); s.add(`${fi}.${l}`); s.add(`${f}${li}`);
+    s.add(`${l}.${f}`); s.add(`${l}${f}`);
+  }
+  return s;
+}
+
+// Decide whether a scraped address belongs to a specific officer. STRICT: the
+// folded local-part must (a) not be a role mailbox, and (b) either exactly equal
+// one of the officer's first+last patterns, or contain BOTH the full surname
+// (≥3 chars) and the first name (≥2 chars). Surname-substring alone is rejected
+// — that was the source of bad "verified" matches.
 export function matchOfficerEmail(
   scraped: string[],
   first: string,
   last: string
 ): string | null {
-  const locals = new Set(patternLocalParts(first, last).map((p) => p.local));
-  const l = asciiFold(last);
+  const strong = strongLocalParts(first, last);
+  const f = asciiFold(first), l = asciiFold(last);
   for (const addr of scraped) {
-    const local = addr.slice(0, addr.lastIndexOf("@")).toLowerCase();
-    const foldedLocal = asciiFold(local);
-    if (locals.has(local) || locals.has(foldedLocal)) return addr;
-    if (l.length >= 3 && foldedLocal.includes(l)) return addr;
+    const foldedLocal = asciiFold(addr.slice(0, addr.lastIndexOf("@")));
+    if (!foldedLocal || ROLE_LOCALPARTS.has(foldedLocal)) continue;
+    if (strong.has(foldedLocal)) return addr;
+    if (l.length >= 3 && f.length >= 2 && foldedLocal.includes(l) && foldedLocal.includes(f)) return addr;
   }
   return null;
+}
+
+// --- domain-ownership confirmation ----------------------------------------- //
+// A name-guessed domain (e.g. "Acme Holdings" -> acme.com) is worthless unless
+// the site actually belongs to that company — an MX record alone doesn't prove
+// it. We confirm by checking the homepage text contains the company's most
+// distinctive name token. This is what stops us attaching emails scraped off an
+// unrelated same-slug company.
+const STOP_TOKENS = new Set([
+  "inc", "incorporated", "llc", "lc", "corp", "corporation", "co", "company",
+  "ltd", "limited", "lp", "llp", "plc", "pllc", "pc", "holdings", "holding",
+  "group", "trust", "fund", "partners", "capital", "ventures", "management",
+  "international", "global", "usa", "us", "the", "and", "of", "for", "a", "an",
+  "real", "estate", "partners", "advisors", "associates", "services", "systems",
+]);
+
+export function companyTokens(name: string | null | undefined): string[] {
+  if (!name) return [];
+  const cleaned = name.replace(/\(.*?\)/g, " ").replace(/[.,&/]+/g, " ");
+  const toks = cleaned.split(/\s+/).map(asciiFold).filter((t) => t.length >= 3 && !STOP_TOKENS.has(t));
+  // Longest tokens first — the most distinctive part of the name.
+  return [...new Set(toks)].sort((a, b) => b.length - a.length);
+}
+
+// True if the page plausibly belongs to `name`: its most distinctive token (or
+// the concatenated slug) appears in the page's folded text.
+export function pageMentionsCompany(html: string, name: string | null | undefined): boolean {
+  const toks = companyTokens(name);
+  if (!toks.length) return false;
+  const folded = asciiFold(html); // strips tags' angle brackets too, but tokens still match text
+  if (folded.includes(toks.join(""))) return true;          // full slug, e.g. "terracycle"
+  return toks.some((t) => t.length >= 4 && folded.includes(t)); // a distinctive word
 }
 
 // Site paths worth scraping for contact addresses, homepage first.

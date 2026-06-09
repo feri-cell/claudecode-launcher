@@ -391,6 +391,10 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
   </div>
   <nav class="sb-nav">
     <div class="sb-sec">Pages</div>
+    <div class="sbi" id="snav-enrich" onclick="goPage('enrich')">
+      <span class="sbi-i"><svg fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/></svg></span>
+      EDGAR Enrichment<span class="sbi-ct" id="ct-en">idle</span>
+    </div>
     <div class="sbi active" id="snav-filings" onclick="goPage('filings')">
       <span class="sbi-i"><svg fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg></span>
       Filings Tracker<span class="sbi-ct" id="ct-f">0</span>
@@ -422,13 +426,7 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
     <svg fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
     <input id="g-srch" placeholder="Search companies, CIK…" oninput="onGS()">
   </div>
-  <input type="file" id="csv-in" accept=".csv" style="display:none;" onchange="onCSVPick(event)">
-  <button class="btn btn-import" onclick="document.getElementById('csv-in').click()">
-    <svg fill="currentColor" viewBox="0 0 20 20" style="width:13px;height:13px;"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
-    Import CSV
-  </button>
-  <button class="btn btn-primary" id="btn-edgar-live" onclick="mscLive(true)" style="display:none;">📡 EDGAR Live</button>
-  <button class="btn btn-ghost" onclick="openScript()">Get Script</button>
+  <button class="btn btn-primary" id="btn-edgar-live" onclick="goPage('enrich')">📡 EDGAR Enrichment</button>
   <button class="btn btn-ghost" id="btn-exp" style="display:none;" onclick="doExport()">Export</button>
   <button class="btn btn-primary" onclick="openAdd()">+ Add Contact</button>
 </div>
@@ -447,11 +445,9 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
         <div class="is-card"><div class="is-num">3</div><div class="is-title">Contacts Load Themselves</div><div class="is-body">As officers + emails surface they flow into the table, lists, and outreach sequences — the same UI you already use.</div></div>
       </div>
       <div class="import-actions">
-        <button class="btn-hero" id="hero-edgar" onclick="mscLive(true)">📡 Pull from EDGAR</button>
-        <button class="btn-script" onclick="document.getElementById('csv-in').click()">📂 Import CSV instead</button>
-        <span style="font-size:11px;color:rgba(255,255,255,.3);margin-left:6px;">or drag a CSV anywhere on the page</span>
+        <button class="btn-hero" id="hero-edgar" onclick="goPage('enrich')">📡 Open EDGAR Enrichment</button>
       </div>
-      <div id="hero-offline" style="display:none;font-size:11px;color:var(--amber);margin-top:10px;">⚠ EDGAR API not reachable — this page isn't being served by the Worker. Import a CSV, or open the dashboard at its <code>*.workers.dev</code> URL.</div>
+      <div id="hero-offline" style="display:none;font-size:11px;color:var(--amber);margin-top:10px;">⚠ EDGAR API not reachable — open the dashboard at its <code>*.workers.dev</code> URL so it can talk to the Worker.</div>
     </div>
   </div>
 
@@ -460,7 +456,7 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
     <div class="data-bar" id="data-bar">
       <span style="font-size:16px;">✓</span>
       <div style="flex:1;"><strong id="data-bar-t">0 filings loaded</strong></div>
-      <button class="btn btn-ghost btn-xs" onclick="document.getElementById('csv-in').click()">Re-import</button>
+      <button class="btn btn-ghost btn-xs" onclick="goPage('enrich')">Enrichment</button>
       <button class="btn btn-ghost btn-xs" onclick="clearAll()">Clear</button>
     </div>
 
@@ -526,17 +522,27 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
     </div>
 
     <div style="font-size:10.5px;color:var(--t3);margin:-4px 0 8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-      <span>💡 <strong style="color:var(--t2);">~</strong> next to an email = guessed (name + domain pattern, not verified)</span>
-      <span>· ✏ to add/edit contact details per row</span>
-      <span>· Re-run <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">edgar_fetch.py</code> to get enriched contacts</span>
+      <span><strong style="color:var(--green);">✓ VERIFIED</strong> = scraped from the company site</span>
+      <span>· <strong style="color:var(--blue);">~ probable</strong> = name pattern on a live domain</span>
+      <span>· <strong style="color:var(--amber);">~ guessed</strong> = name pattern only</span>
+      <span>· tick rows to bulk-add to a list</span>
     </div>
     <div class="card" style="margin-bottom:14px;" id="main-card">
       <div class="ch">
         <span class="ch-t">Filings <span class="badge bg-blue" id="f-ct" style="margin-left:5px;">0</span></span>
         <span style="font-size:11px;color:var(--t3);">✏ to add contact · "Add to List" to track · Status only updates for listed contacts</span>
       </div>
+      <div class="bulk-bar hidden" id="bulk-bar-f">
+        <span><span id="bk-ct-f">0</span> selected</span>
+        <span style="flex:1;"></span>
+        <select class="status-sel" id="bk-mv-f" style="max-width:160px;"><option value="">— Choose list —</option></select>
+        <button class="btn btn-green btn-xs" onclick="bulkAddToListF()">+ Add to list</button>
+        <button class="btn btn-ghost btn-xs" onclick="bulkNewListF()">+ New list</button>
+        <button class="btn btn-ghost btn-xs" onclick="clrSelF()">Clear</button>
+      </div>
       <div class="tw"><table id="tbl">
         <thead><tr>
+          <th style="width:30px;"><input type="checkbox" id="chk-all-f" onchange="togAllF(this)"></th>
           <th onclick="srt('co')">Company</th>
           <th onclick="srt('cik')">CIK</th>
           <th onclick="srt('reg')">Regulation</th>
@@ -559,6 +565,61 @@ input[type=checkbox]{accent-color:var(--blue-lt);width:13px;height:13px;cursor:p
 
     <div class="row-hd" style="margin-bottom:7px;"><div class="row-hd-t">Recent Filings Feed</div></div>
     <div class="card" style="margin-bottom:14px;"><div id="feed"></div></div>
+  </div>
+</div>
+
+<!-- ════ PAGE — EDGAR ENRICHMENT ══════════ -->
+<div class="page" id="page-enrich">
+
+  <!-- Status banner: is it running, since when, last tick -->
+  <div id="en-banner" style="display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--bdr);border-left:4px solid var(--t3);border-radius:var(--r);box-shadow:var(--sh);padding:14px 18px;margin-bottom:14px;">
+    <span id="en-dot" style="width:12px;height:12px;border-radius:50%;background:var(--t3);flex-shrink:0;"></span>
+    <div style="flex:1;">
+      <div id="en-state" style="font-family:var(--fh);font-weight:700;font-size:16px;color:var(--t1);">Checking status…</div>
+      <div id="en-sub" style="font-size:11.5px;color:var(--t2);margin-top:2px;">—</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn btn-primary" id="msc-start" onclick="mscEnrich()">▶ Start / resume</button>
+      <button class="btn btn-ghost" id="msc-pause" onclick="mscPause()">⏸ Pause</button>
+    </div>
+  </div>
+
+  <!-- Regulation picker -->
+  <div class="card" style="padding:14px 18px;margin-bottom:14px;">
+    <div style="font-size:11px;font-weight:600;color:var(--t2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:9px;">Regulations to crawl</div>
+    <div id="msc-regs" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <label class="msc-chk"><input type="checkbox" value="ALL" checked onchange="mscRegToggle(this)"> All (A+, D, S, 144A)</label>
+      <label class="msc-chk"><input type="checkbox" value="D"> Reg D</label>
+      <label class="msc-chk"><input type="checkbox" value="A+"> Reg A+</label>
+      <label class="msc-chk"><input type="checkbox" value="S"> Reg S</label>
+      <label class="msc-chk"><input type="checkbox" value="144A"> Rule 144A</label>
+      <span style="flex:1;"></span>
+      <label class="msc-chk" title="Refresh the Filings/Contacts table automatically as new contacts arrive"><input type="checkbox" id="msc-auto" checked> Auto-load into table</label>
+      <button class="btn btn-ghost btn-xs" id="msc-load" onclick="mscLoadCsv(false)">↓ Load contacts now</button>
+    </div>
+  </div>
+
+  <!-- KPI strip -->
+  <div class="metrics" id="en-kpis" style="margin-bottom:14px;">
+    <div class="mc b-blue"><div class="mc-l">Filings discovered</div><div class="mc-v" id="en-k-fil">0</div><div class="mc-d" id="en-k-fil-d">—</div></div>
+    <div class="mc b-gold"><div class="mc-l">Companies enriched</div><div class="mc-v" id="en-k-co">0</div><div class="mc-d" id="en-k-co-d">—</div></div>
+    <div class="mc b-purple"><div class="mc-l">Decision-makers</div><div class="mc-v" id="en-k-off">0</div><div class="mc-d">top-3 per company</div></div>
+    <div class="mc b-green"><div class="mc-l">Verified emails</div><div class="mc-v" id="en-k-ev">0</div><div class="mc-d">scraped from site</div></div>
+    <div class="mc b-blue"><div class="mc-l">Probable emails</div><div class="mc-v" id="en-k-eg">0</div><div class="mc-d">pattern + live domain</div></div>
+    <div class="mc b-teal"><div class="mc-l">Contacts ready</div><div class="mc-v" id="en-k-ready">0</div><div class="mc-d">name + any email</div></div>
+  </div>
+
+  <!-- 4-stage pipeline -->
+  <div class="row-hd" style="margin-bottom:8px;"><div><div class="row-hd-t">Enrichment pipeline</div><div class="row-hd-s">Each 1-minute cron tick advances these stages in resumable, rate-limited steps.</div></div></div>
+  <div id="msc-stages" style="display:grid;gap:12px;margin-bottom:14px;">
+    <div class="msc-stage" data-k="discovery" data-c="var(--blue)"><div class="msc-st-top"><span>1 · Discovery <span style="color:var(--t3);">EFTS → filings</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
+    <div class="msc-stage" data-k="companies" data-c="var(--gold)"><div class="msc-st-top"><span>2 · Company enrichment <span style="color:var(--t3);">submissions JSON</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
+    <div class="msc-stage" data-k="officers" data-c="var(--purple)"><div class="msc-st-top"><span>3 · Officer extraction <span style="color:var(--t3);">Form D XML + filing HTML</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
+    <div class="msc-stage" data-k="emails" data-c="var(--green)"><div class="msc-st-top"><span>4 · Email finding <span style="color:var(--t3);">domain · pattern · mailto scrape</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
+  </div>
+
+  <div class="card" style="padding:12px 16px;font-size:11.5px;color:var(--t2);line-height:1.55;">
+    <strong style="color:var(--t1);">How emails are found:</strong> domain resolved from the filing's website or an MX-validated guess from the company name; addresses are the 8 industry-standard patterns. <strong>Verified</strong> (<span style="color:var(--green);">●</span>) means we scraped a matching <code>mailto:</code> off the company site — the rest are flagged guesses (<span style="color:var(--amber);">~</span>). SMTP probing isn't possible on Cloudflare Workers, so there's no live RCPT verification.
   </div>
 </div>
 
@@ -1064,10 +1125,21 @@ const fmtD = iso => {
 };
 const ini = s => (s||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase();
 function lsBadge(s){if(!s)return'<span class="badge bg-slate">Not in list</span>';const c=LSC[s]||{label:s,cls:'bg-slate'};return`<span class="badge ${c.cls}">${c.label}</span>`;}
+/* Email cell with confidence tier: Verified (scraped) / Probable (pattern+MX) / Guessed. */
+function emTier(c){
+  if(!c||!c.email) return '<span class="ts">—</span>';
+  const t=c.email_tier||(c.email_verified?'verified':'guessed');
+  const b = t==='verified'
+    ? '<span title="Verified — published on the company’s own site" style="color:var(--green);font-size:9px;font-weight:800;margin-left:4px;">✓ VERIFIED</span>'
+    : t==='probable'
+      ? '<span title="Probable — name pattern on a confirmed domain that can receive mail (MX)" style="color:var(--blue);font-size:9px;font-weight:700;margin-left:4px;cursor:help;">~ probable</span>'
+      : '<span title="Guessed — name pattern only, domain not confirmed for mail" style="color:var(--amber);font-size:9px;font-weight:700;margin-left:4px;cursor:help;">~ guessed</span>';
+  return `<a class="tlink" href="mailto:${c.email}" style="font-size:11px;">${c.email}</a>${b}`;
+}
 function regBadge(r){const m={'A+':'bg-blue','S':'bg-green','D':'bg-gold','144A':'bg-purple'};return`<span class="badge ${m[r]||'bg-slate'}">Reg ${r}</span>`;}
 function fsBadge(reg,st){if(reg==='A+'){const m={qualified:'bg-green',active:'bg-blue',filed:'bg-amber',withdrawn:'bg-red'};const l={qualified:'Qualified',active:'Active',filed:'Filed',withdrawn:'Withdrawn'};return`<span class="badge ${m[st]||'bg-slate'}">${l[st]||st}</span>`;}return`<span class="badge bg-blue">Active</span>`;}
 function toast(m,t){const el=document.getElementById('toast-el');document.getElementById('t-ico').textContent=t==='err'?'✗':'✓';document.getElementById('t-ico').style.color=t==='err'?'#f87171':'#4caf50';document.getElementById('t-msg').textContent=m;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),3200);}
-function showProg(show,msg='',pct=0){const ov=document.getElementById('prog-ov');ov.classList.toggle('show',show);if(show){document.getElementById('prog-msg').textContent=msg;document.getElementById('prog-fill').style.width=pct+'%';document.getElementById('prog-pct').textContent=pct+'%';}}
+function showProg(show,msg='',pct=0){if(window.mscSilent)return;const ov=document.getElementById('prog-ov');ov.classList.toggle('show',show);if(show){document.getElementById('prog-msg').textContent=msg;document.getElementById('prog-fill').style.width=pct+'%';document.getElementById('prog-pct').textContent=pct+'%';}}
 function ck(id){return document.getElementById(id);}
 
 /* contact helpers */
@@ -1091,9 +1163,6 @@ function buildYears(){
    CSV IMPORT — Streaming chunked parser
    Never blocks UI. 2000 rows per chunk.
    ══════════════════════════════════════ */
-function onCSVPick(e){const f=e.target.files[0];if(f)beginImport(f);e.target.value='';}
-document.addEventListener('dragover',e=>e.preventDefault());
-document.addEventListener('drop',e=>{e.preventDefault();const f=e.dataTransfer?.files[0];if(f&&f.name.endsWith('.csv'))beginImport(f);});
 
 function beginImport(file){
   showProg(true,`Reading ${(file.size/1024/1024).toFixed(1)} MB…`,2);
@@ -1128,7 +1197,8 @@ function parseChunked(text){
     lname:   ci('last name'),
     role:    ci('role','title'),
     email:   ci('email','email address'),
-    gemail:  ci('guessed email','guessed_email'),   // new: guessed emails from Python script
+    gemail:  ci('guessed email','guessed_email'),
+    estat:   ci('email status','email_status'),   // Verified | Probable | Guessed
     eu:      ci('edgar url','edgar_url'),
     src:     ci('source'),
   };
@@ -1212,15 +1282,20 @@ function parseChunked(text){
       /* Contact data */
       const k      = ck_key(cik,reg);
       const prev   = prevContacts[k] || {};
-      const gemail = g(COL.gemail,'');  // guessed email from Python enrichment
+      const gemail = g(COL.gemail,'');             // best guessed/probable address
+      const estat  = (g(COL.estat,'')||'').toLowerCase();  // verified|probable|guessed
       const realEmail = prev.email || email;
       const bestEmail = realEmail || gemail;
+      // Tier the contact: a user-confirmed (prev) or scraped email is 'verified';
+      // otherwise inherit the Worker's grade for the guessed address.
+      const emailTier = realEmail ? 'verified' : (estat || (gemail ? 'guessed' : ''));
       DB.contacts[k] = {
         first: prev.first || fname,
         last:  prev.last  || lname,
         role:  prev.role  || role,
         email: bestEmail,
-        email_verified: !!(realEmail),   // true if real email, false if guessed
+        email_verified: emailTier==='verified',
+        email_tier:     emailTier,       // verified | probable | guessed | ''
         guessed_email:  gemail,
         list_status:   prev.list_status   || null,
         added_to_list: prev.added_to_list || null,
@@ -1270,6 +1345,27 @@ function splitCSVLine(line){
 function finishImport(){
   DB.stats.total = DB.rows.length;
   dataLoaded = true;
+
+  // Silent path (auto-load from the EDGAR tab): update text/data in place with
+  // no progress overlay, no toast, and preserve the user's current table page —
+  // so a background refresh doesn't flicker or yank them off their row.
+  if(window.mscSilent){
+    buildYears();
+    ck('onboard').style.display = 'none';
+    ck('loaded').style.display  = 'block';
+    ck('btn-exp').style.display = 'inline-flex';
+    ck('data-bar-t').textContent = DB.rows.length.toLocaleString()+' filings loaded';
+    ck('sb-ct').textContent      = DB.rows.length.toLocaleString()+' filings';
+    rebuildIdx();
+    if(typeof window.mscSavedPage==='number') DB.page = window.mscSavedPage;
+    renderTable();
+    updateMetrics();
+    updateRegCards();
+    updateSidebar();
+    window.mscSilent = false;
+    return;
+  }
+
   showProg(true,'Building index…',98);
   setTimeout(()=>{
     showProg(false);
@@ -1385,7 +1481,7 @@ function renderTable(){
   const tb=ck('t-body');
 
   if(!slice.length){
-    tb.innerHTML=`<tr><td colspan="9"><div class="empty"><div class="empty-ico">📂</div><div class="empty-t">No filings match current filters</div></div></td></tr>`;
+    tb.innerHTML=`<tr><td colspan="10"><div class="empty"><div class="empty-ico">📂</div><div class="empty-t">No filings match current filters</div></div></td></tr>`;
     renderPager(0,0,0);return;
   }
 
@@ -1399,17 +1495,16 @@ function renderTable(){
       ?`<span class="badge bg-green" style="font-size:9px;">In list ✓</span>`
       :`<button onclick="addToList('${r.cik}','${r.reg}')" class="btn btn-green btn-xs">+ Add</button>`;
     const name=((c.first||'')+(c.last?' '+c.last:'')).trim()||'—';
+    const kf=ck_key(r.cik,r.reg);
     return`<tr>
+      <td><input type="checkbox" class="row-chk-f" data-k="${kf}" ${selKeysF.has(kf)?'checked':''} onchange="onChkF('${kf}',this.checked)"></td>
       <td><div class="tb2" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.co}">${r.co}</div><div class="ts">${r.tier}</div></td>
       <td class="ts"><a href="${eu}" target="_blank" class="tlink">${r.cik}</a></td>
       <td>${regBadge(r.reg)}</td>
       <td class="ts">${fmtD(r.filed)}</td>
       <td>${fsBadge(r.reg,r.status)}</td>
       <td class="tb2">${name}<div class="ts">${c.role||'—'}</div></td>
-      <td>${c.email
-        ? `<a class="tlink" href="mailto:${c.email}" style="font-size:11px;">${c.email}</a>${!c.email_verified?'<span title="Guessed email — not verified" style="color:var(--amber);font-size:9px;margin-left:3px;cursor:help;">~</span>':''}`
-        : '<span class="ts">—</span>'
-      }</td>
+      <td>${emTier(c)}</td>
       <td>${lsBadge(lSt)}</td>
       <td style="white-space:nowrap;display:flex;gap:3px;padding:8px 10px;">
         ${addBtn}
@@ -1559,10 +1654,11 @@ function buildListCharts(){
 function goPage(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   ck('page-'+id)?.classList.add('active');
-  ['filings','out','list'].forEach(n=>ck('snav-'+n)?.classList.toggle('active',n===id));
-  const t={filings:'SEC Filings Tracker',out:'Email Outreach',list:'Lists & Contacts'};
+  ['enrich','filings','out','list'].forEach(n=>ck('snav-'+n)?.classList.toggle('active',n===id));
+  const t={enrich:'EDGAR Enrichment',filings:'SEC Filings Tracker',out:'Email Outreach',list:'Lists & Contacts'};
   ck('tb-title').textContent=t[id]||id;
   if(id==='list'&&!listChartDone){buildListCharts();listChartDone=true;}
+  if(id==='enrich'&&typeof mscPoll==='function'){mscPoll();}
 }
 function qReg(r){goPage('filings');regF=r;document.querySelectorAll('#reg-chips .chip').forEach(c=>c.classList.toggle('active',c.dataset.v===r));const dd=ck('f-reg');if(dd)dd.value=r;onF();}
 function qYear(y){goPage('filings');const el=ck('f-yf');if(!el)return;if(y==='all'){el.value='all';ck('f-yt').value='all';}else{el.value=String(y);ck('f-yt').value=String(y);}onF();}
@@ -1833,10 +1929,11 @@ function updateListSidebarCounts(){
 function refreshListDropdowns(){
   const opts = DB.lists.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
   const noList = '<option value="">— No list —</option>';
-  const elems = ['m-list-sel','bk-mv'];
+  const elems = ['m-list-sel','bk-mv','bk-mv-f'];
+  const placeholder = {'bk-mv':'— Move to list —','bk-mv-f':'— Choose list —'};
   elems.forEach(id=>{
     const el = ck(id); if(!el) return;
-    el.innerHTML = (id==='bk-mv'?'<option value="">— Move to list —</option>':noList) + opts;
+    el.innerHTML = (placeholder[id]?`<option value="">${placeholder[id]}</option>`:noList) + opts;
   });
 }
 
@@ -1939,9 +2036,7 @@ function renderList(){
       <td><input type="checkbox" class="row-chk" data-k="${k}" onchange="onChk('${k}',this.checked)"></td>
       <td class="tb2">${name}<div class="ts">${c.role||'—'}</div></td>
       <td class="tm" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${row.co}</td>
-      <td>${c.email
-        ?`<a class="tlink" href="mailto:${c.email}" style="font-size:11px;">${c.email}</a>${!c.email_verified?'<span title="Guessed — not verified" style="color:var(--amber);font-size:9px;margin-left:2px;cursor:help;">~</span>':''}`
-        :'<span class="ts">—</span>'}</td>
+      <td>${emTier(c)}</td>
       <td>${regBadge(row.reg)}</td>
       <td style="min-width:100px;">${listTags||'<span class="ts">—</span>'}</td>
       <td><select class="status-sel" onchange="chSt('${k}',this.value)">
@@ -1992,6 +2087,43 @@ function chSt(k,val){
 function onChk(k,chk){if(chk)selKeys.add(k);else selKeys.delete(k);ck('bulk-bar').classList.toggle('hidden',selKeys.size===0);ck('bk-ct').textContent=selKeys.size;}
 function togAll(m){document.querySelectorAll('.row-chk').forEach(ch=>{const k=ch.dataset.k;ch.checked=m.checked;if(m.checked)selKeys.add(k);else selKeys.delete(k);});ck('bulk-bar').classList.toggle('hidden',selKeys.size===0);ck('bk-ct').textContent=selKeys.size;}
 function clrSel(){selKeys.clear();document.querySelectorAll('.row-chk').forEach(c=>c.checked=false);const m=ck('chk-all');if(m)m.checked=false;ck('bulk-bar').classList.add('hidden');}
+
+/* ── Filings-page multi-select → bulk add to one list ── */
+const selKeysF = new Set();
+function _bulkBarF(){const bb=ck('bulk-bar-f');if(bb)bb.classList.toggle('hidden',selKeysF.size===0);const ct=ck('bk-ct-f');if(ct)ct.textContent=selKeysF.size;}
+function onChkF(k,chk){if(chk)selKeysF.add(k);else selKeysF.delete(k);_bulkBarF();}
+function togAllF(m){document.querySelectorAll('.row-chk-f').forEach(ch=>{const k=ch.dataset.k;ch.checked=m.checked;if(m.checked)selKeysF.add(k);else selKeysF.delete(k);});_bulkBarF();}
+function clrSelF(){selKeysF.clear();document.querySelectorAll('.row-chk-f').forEach(c=>c.checked=false);const m=ck('chk-all-f');if(m)m.checked=false;_bulkBarF();}
+const _LIST_PALETTE=['#1976d2','#2e7d32','#c8a45a','#6d28d9','#0e7490','#b45309','#be185d','#0f766e'];
+function _addKeysToList(keys,lid){
+  let n=0;const today=new Date().toISOString().slice(0,10);
+  keys.forEach(k=>{
+    const i=k.lastIndexOf('|'); const cik=k.slice(0,i), reg=k.slice(i+1);
+    const c=ensureContact(cik,reg);
+    if(!c.list_ids)c.list_ids=new Set();
+    if(!c.list_ids.has(lid)){c.list_ids.add(lid);n++;}
+    if(!c.list_status){c.list_status='new';c.added_to_list=today;}
+  });
+  return n;
+}
+function _afterBulkF(msg){toast(msg);clrSelF();renderNamedLists();renderList();renderOC();rebuildIdx();renderTable();updateListSidebarCounts();updateMetrics();}
+function bulkAddToListF(){
+  if(!selKeysF.size){toast('Tick some rows first','err');return;}
+  const lid=ck('bk-mv-f').value;
+  if(!lid){toast('Choose a list, or “+ New list”','err');return;}
+  const n=_addKeysToList([...selKeysF],lid);
+  _afterBulkF(`Added ${n} contact${n!==1?'s':''} to "${listName(lid)}"`);
+}
+function bulkNewListF(){
+  if(!selKeysF.size){toast('Tick some rows first','err');return;}
+  const name=(prompt('New list name:')||'').trim();
+  if(!name)return;
+  const id=nextListId();
+  DB.lists.push({id,name,color:_LIST_PALETTE[DB.lists.length%_LIST_PALETTE.length],created:new Date().toISOString().slice(0,10)});
+  refreshListDropdowns();
+  const n=_addKeysToList([...selKeysF],id);
+  _afterBulkF(`Created "${name}" and added ${n} contact${n!==1?'s':''}`);
+}
 function applyBulk(){
   const val=ck('bk-sel').value;if(!val){toast('Select a status','err');return;}
   selKeys.forEach(k=>{const c=DB.contacts[k];if(c)c.list_status=val;});
@@ -2118,45 +2250,6 @@ renderNamedLists();
 refreshListDropdowns();
 </script>
 
-<!-- ═══ EDGAR LIVE ENRICHMENT (wired to the Cloudflare Worker /api/*) ═══ -->
-<div id="msc-live" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(13,27,62,.45);backdrop-filter:blur(2px);" onclick="if(event.target===this)mscLive(false)">
-  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(620px,94vw);max-height:92vh;overflow:auto;background:var(--surface);border:1px solid var(--bdr-md);border-radius:var(--rlg);box-shadow:var(--sh-lg);font-family:var(--f);">
-    <div style="display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--bdr);">
-      <div style="font-family:var(--fh);font-weight:600;font-size:16px;color:var(--t1);flex:1;">📡 EDGAR Live Enrichment</div>
-      <span id="msc-conn" class="" style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid var(--bdr-md);color:var(--t2);">connecting…</span>
-      <button class="btn btn-ghost btn-xs" onclick="mscLive(false)">✕</button>
-    </div>
-
-    <div style="padding:18px 20px;">
-      <div style="font-size:12px;color:var(--t2);margin-bottom:8px;">Regulations to crawl</div>
-      <div id="msc-regs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
-        <label class="msc-chk"><input type="checkbox" value="ALL" checked onchange="mscRegToggle(this)"> All</label>
-        <label class="msc-chk"><input type="checkbox" value="D"> Reg D</label>
-        <label class="msc-chk"><input type="checkbox" value="A+"> Reg A+</label>
-        <label class="msc-chk"><input type="checkbox" value="S"> Reg S</label>
-        <label class="msc-chk"><input type="checkbox" value="144A"> Rule 144A</label>
-      </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:18px;">
-        <button class="btn btn-primary" id="msc-start" onclick="mscEnrich()">▶ Start enrichment</button>
-        <button class="btn btn-ghost" id="msc-pause" onclick="mscPause()">⏸ Pause</button>
-        <button class="btn btn-ghost" id="msc-load" onclick="mscLoadCsv(false)">↓ Load contacts into dashboard</button>
-        <label class="msc-chk" style="margin-left:auto;"><input type="checkbox" id="msc-auto" checked> auto-load</label>
-      </div>
-
-      <div id="msc-stages" style="display:grid;gap:12px;">
-        <div class="msc-stage" data-k="discovery" data-c="var(--blue)"><div class="msc-st-top"><span>1 · Discovery <span style="color:var(--t3);">EFTS → filings</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
-        <div class="msc-stage" data-k="companies" data-c="var(--gold)"><div class="msc-st-top"><span>2 · Company enrichment <span style="color:var(--t3);">submissions JSON</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
-        <div class="msc-stage" data-k="officers" data-c="var(--purple)"><div class="msc-st-top"><span>3 · Officer extraction <span style="color:var(--t3);">Form D XML + HTML</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
-        <div class="msc-stage" data-k="emails" data-c="var(--green)"><div class="msc-st-top"><span>4 · Email finding <span style="color:var(--t3);">domain · pattern · mailto scrape</span></span><span class="msc-st-meta">—</span></div><div class="msc-bar"><i></i></div></div>
-      </div>
-
-      <div style="font-size:11px;color:var(--t3);margin-top:14px;line-height:1.5;">
-        A 1-minute cron advances the backfill in resumable, rate-limited ticks. <strong>Verified</strong> emails come from scraping the company site for <code>mailto:</code> matches; everything else is a flagged pattern guess (<span style="color:var(--amber);">~</span>). SMTP probing isn't possible on Cloudflare Workers.
-      </div>
-    </div>
-  </div>
-</div>
 <style>
   .msc-chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--t1);background:var(--bg);border:1px solid var(--bdr);border-radius:var(--rsm);padding:5px 10px;cursor:pointer;}
   .msc-chk input{accent-color:var(--blue);}
@@ -2165,16 +2258,18 @@ refreshListDropdowns();
   .msc-st-meta{color:var(--t2);font-variant-numeric:tabular-nums;font-weight:400;}
   .msc-bar{height:8px;border-radius:5px;background:var(--bdr);overflow:hidden;}
   .msc-bar > i{display:block;height:100%;width:0;background:var(--blue);transition:width .4s ease;}
-  #msc-conn.ok{color:var(--green);border-color:var(--green-bd);background:var(--green-bg);}
-  #msc-conn.live{color:var(--blue);border-color:var(--blue-bd);background:var(--blue-bg);}
-  #msc-conn.paused{color:var(--amber);border-color:var(--amber-bd);background:var(--amber-bg);}
-  #msc-conn.off{color:var(--red);border-color:var(--red-bd);background:var(--red-bg);}
+  #en-dot.live{animation:en-pulse 1.5s ease-in-out infinite;}
+  @keyframes en-pulse{0%,100%{box-shadow:0 0 0 0 rgba(21,101,192,.5);}50%{box-shadow:0 0 0 5px rgba(21,101,192,0);}}
 </style>
 <script>
-/* ══ EDGAR Live — drives the Worker /api/* endpoints and feeds contacts into
-      the existing CSV import pipeline (parseChunked) so the whole dashboard
-      lights up with zero manual steps. ══ */
-const mscState = { open:false, timer:null, lastTop3:-1, lastLoad:0, online:false };
+/* ══ EDGAR Enrichment tab — drives the Worker /api/* endpoints and feeds
+      contacts into the existing CSV import pipeline (parseChunked). Progress
+      updates are text-only (no flicker); the heavy table reload happens
+      silently and throttled so the user is never yanked around. ══ */
+const mscState = { timer:null, lastTop3:-1, lastLoad:0, online:false };
+const mscF = (n)=>(n??0).toLocaleString();
+function mscOnPage(){ return document.querySelector('.page.active')?.id==='page-enrich'; }
+function mscTime(iso){ if(!iso) return '—'; try{ return new Date(iso).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return '—'; } }
 
 async function mscApi(path, opts){
   const r = await fetch(path, opts);
@@ -2196,12 +2291,6 @@ function mscSelectedRegs(){
   return checked;
 }
 
-function mscLive(show){
-  mscState.open = show;
-  ck('msc-live').style.display = show ? 'block' : 'none';
-  if(show){ mscPoll(); }
-}
-
 async function mscEnrich(){
   const regs = mscSelectedRegs();
   const btn = ck('msc-start'); btn.disabled = true; btn.textContent = '… starting';
@@ -2209,7 +2298,7 @@ async function mscEnrich(){
     await mscApi('/api/enrich',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({regs})});
     toast('EDGAR crawl started — contacts will stream in');
   }catch(e){ toast('Could not start crawl: '+e.message,'err'); }
-  finally{ btn.disabled=false; btn.textContent='▶ Start enrichment'; }
+  finally{ btn.disabled=false; btn.textContent='▶ Start / resume'; }
   mscPoll();
 }
 
@@ -2228,42 +2317,71 @@ function mscSetStage(k, done, total, label){
   el.querySelector('.msc-st-meta').textContent = label;
 }
 
+function mscText(id,v){ const el=ck(id); if(el) el.textContent=v; }
+
+function mscRender(p){
+  const f = mscF;
+  const em = p.emails || {verified:0, probable:0, with_any:0};
+
+  // Status banner + sidebar badge.
+  let dot, state, sub, badge;
+  if(p.paused){ dot='var(--amber)'; state='⏸ Paused'; badge='paused';
+    sub=`Click “Start / resume” to continue. ${f(p.officers.top3)} contacts so far.`; }
+  else if(p.active){ dot='var(--blue)'; state='● Crawl running'; badge='live';
+    sub=`Last tick ${mscTime(p.last_tick_at)} · started ${mscTime(p.started_at)} · regs: ${(p.regs||[]).join(', ')||'—'}`; }
+  else if(p.discovery.total>0){ dot='var(--green)'; state='✓ Idle — caught up'; badge='idle';
+    sub=`All queued work done. Last tick ${mscTime(p.last_tick_at)}. Start again to crawl more regulations.`; }
+  else { dot='var(--t3)'; state='Idle — not started'; badge='idle';
+    sub='Pick regulations below and click “Start / resume”.'; }
+  const dotEl=ck('en-dot'); if(dotEl){ dotEl.style.background=dot; dotEl.classList.toggle('live', !!p.active); }
+  mscText('en-state', state); mscText('en-sub', sub);
+  const bnEl=ck('en-banner'); if(bnEl) bnEl.style.borderLeftColor=dot;
+  mscText('ct-en', badge);
+  const ctEl=ck('ct-en'); if(ctEl) ctEl.style.background = p.active?'var(--blue-lt)':p.paused?'var(--amber)':'rgba(255,255,255,.12)';
+
+  // KPIs.
+  mscText('en-k-fil', f(p.filings.total));   mscText('en-k-fil-d', `${f(p.filings.parsed)} parsed for officers`);
+  mscText('en-k-co',  f(p.companies.enriched)); mscText('en-k-co-d', `of ${f(p.companies.total)} discovered`);
+  mscText('en-k-off', f(p.officers.top3));
+  mscText('en-k-ev',  f(em.verified));
+  mscText('en-k-eg',  f(em.probable||0));
+  mscText('en-k-ready', f(em.with_any));
+
+  // Stages.
+  mscSetStage('discovery', p.discovery.done, p.discovery.total,
+              `${f(p.discovery.done)} / ${f(p.discovery.total)} windows · ${f(p.filings.total)} filings`);
+  mscSetStage('companies', p.companies.enriched, p.companies.total,
+              `${f(p.companies.enriched)} / ${f(p.companies.total)} enriched`);
+  mscSetStage('officers', p.filings.parsed+p.filings.incomplete, p.filings.total,
+              `${f(p.filings.parsed)} parsed · ${f(p.officers.top3)} decision-makers`);
+  mscSetStage('emails', em.with_any, p.officers.top3,
+              `${f(em.with_any)} / ${f(p.officers.top3)} addressed · ${f(em.verified)} verified · ${f(em.probable||0)} probable`);
+}
+
 async function mscPoll(){
   if(mscState.timer){ clearTimeout(mscState.timer); mscState.timer=null; }
   let p;
   try{ p = await (await mscApi('/api/progress')).json(); mscState.online=true; }
-  catch(e){ mscState.online=false; mscConn('off','offline'); return; }
+  catch(e){
+    mscState.online=false;
+    mscText('en-state','⚠ EDGAR API unreachable'); mscText('en-sub','This page isn’t being served by the Worker. Import a CSV instead.'); mscText('ct-en','off');
+    return;
+  }
 
-  mscConn(p.paused?'paused':p.active?'live':'ok',
-          p.paused?'paused':p.active?'crawling…':'idle'+(p.discovery.total?' · caught up':''));
+  mscRender(p);
 
-  const f=(n)=>(n??0).toLocaleString();
-  mscSetStage('discovery', p.discovery.done, p.discovery.total,
-              `${f(p.discovery.done)}/${f(p.discovery.total)} windows · ${f(p.filings.total)} filings`);
-  mscSetStage('companies', p.companies.enriched, p.companies.total,
-              `${f(p.companies.enriched)}/${f(p.companies.total)} · ${f(p.companies.with_website)} w/ site`);
-  mscSetStage('officers', p.filings.parsed+p.filings.incomplete, p.filings.total,
-              `${f(p.filings.parsed)} parsed · ${f(p.officers.top3)} top-3`);
-  const em=p.emails||{verified:0,with_any:0};
-  mscSetStage('emails', em.with_any, p.officers.top3,
-              `${f(em.with_any)}/${f(p.officers.top3)} addressed · ${f(em.verified)} verified`);
-
-  // Auto-load new contacts (debounced; parseChunked preserves prior edits).
+  // Silently refresh the table when new contacts arrive (throttled, only on
+  // change). parseChunked preserves prior contact edits and the current page.
   const auto = ck('msc-auto') && ck('msc-auto').checked;
-  if(auto && p.officers.top3>0 && p.officers.top3!==mscState.lastTop3 && Date.now()-mscState.lastLoad>15000){
+  if(auto && p.officers.top3>0 && p.officers.top3!==mscState.lastTop3 && Date.now()-mscState.lastLoad>20000){
     mscLoadCsv(true);
   }
   mscState.lastTop3 = p.officers.top3;
 
-  // Keep polling while the panel is open or a crawl is active.
-  if(mscState.open || p.active){
-    mscState.timer = setTimeout(mscPoll, mscState.open?2500:12000);
-  }
-}
-
-function mscConn(cls, txt){
-  const el = ck('msc-conn'); if(!el) return;
-  el.className = cls; el.textContent = txt;
+  // Poll fast while viewing this tab; a slow heartbeat while a crawl runs in the
+  // background (keeps the sidebar badge + auto-load alive); stop when idle+away.
+  const onPage = mscOnPage();
+  if(onPage || p.active){ mscState.timer = setTimeout(mscPoll, onPage?3000:12000); }
 }
 
 async function mscLoadCsv(silent){
@@ -2275,12 +2393,13 @@ async function mscLoadCsv(silent){
       return;
     }
     mscState.lastLoad = Date.now();
-    parseChunked(txt);                 // existing pipeline: resets + rebuilds dashboard
-    if(!silent) mscLive(false);
+    if(silent){ window.mscSilent = true; window.mscSavedPage = (typeof DB!=='undefined') ? DB.page : 0; }
+    parseChunked(txt);                 // existing pipeline (silent-aware via window.mscSilent)
+    if(!silent){ toast('Contacts loaded into dashboard'); goPage('filings'); }
   }catch(e){ if(!silent) toast('Load failed: '+e.message,'err'); }
 }
 
-/* On load: detect whether we're served by the Worker; toggle the live controls
+/* On load: detect whether we're served by the Worker; reveal the live controls
    and pull existing contacts in automatically. */
 async function mscBoot(){
   try{
@@ -2288,14 +2407,16 @@ async function mscBoot(){
     mscState.online = true;
     ck('btn-edgar-live').style.display = 'inline-flex';
     const off = ck('hero-offline'); if(off) off.style.display='none';
+    mscRender(p);
     if(p.officers && p.officers.top3>0 && !dataLoaded){ mscLoadCsv(true); }
     if(p.active){ mscPoll(); }
   }catch(e){
-    // Not served by the Worker (e.g. opened as a local file) — hide live button.
+    // Not served by the Worker (e.g. opened as a local file).
     ck('btn-edgar-live').style.display = 'none';
     const off = ck('hero-offline'), hero = ck('hero-edgar');
     if(off) off.style.display='block';
-    if(hero){ hero.textContent='📂 Import EDGAR CSV'; hero.setAttribute('onclick',"document.getElementById('csv-in').click()"); }
+    if(hero){ hero.disabled = true; hero.textContent='📡 EDGAR API unreachable'; }
+    mscText('ct-en','off');
   }
 }
 mscBoot();

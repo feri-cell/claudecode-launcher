@@ -17,6 +17,7 @@ import {
   generatePatterns,
   extractEmailsAtDomain,
   matchOfficerEmail,
+  pageMentionsCompany,
   SCRAPE_PATHS,
 } from "./email";
 
@@ -272,12 +273,14 @@ async function recomputeTop3(env: Env, cik: number): Promise<void> {
 }
 
 // --- step 4: email finding ------------------------------------------------- //
-// For each enriched company that has top-3 officers and hasn't been emailed yet:
-// resolve a mail domain (disclosed website → MX-validated name guess), scrape a
-// few pages for real addresses, then for every top-3 officer store a scraped
-// 'verified' hit (if found) plus the eight pattern guesses. The company is then
-// marked email_status='done' so it's never reprocessed, even when no domain is
-// found. SMTP probing is impossible on Workers, so guesses stay 'not_attempted'.
+// For each enriched company with top-3 officers that hasn't been emailed yet,
+// resolve a mail domain and TRUST it only when ownership is established:
+//   • a domain disclosed in the issuer's filing  → trusted outright, or
+//   • a name-guessed domain whose homepage actually mentions the company.
+// An MX record alone is NOT enough (any parked same-slug domain has one) — that
+// was the source of bad "verified" emails. Only on a trusted domain do we scrape
+// for real addresses (strict person-match → 'verified') and emit pattern guesses.
+// Untrusted/unknown → no addresses, just mark the company done.
 async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<number> {
   const companies = (
     await env.DB.prepare(
@@ -290,40 +293,41 @@ async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<nu
       .all<any>()
   ).results;
 
-  const scrapePages = Math.max(0, Number(env.EMAIL_SCRAPE_PAGES) || 3);
+  const scrapePages = Math.max(1, Number(env.EMAIL_SCRAPE_PAGES) || 3);
   let done = 0;
   for (const c of companies) {
     if (client.budget.exhausted) break;
     const cik = Number(c.cik);
     try {
-      // 4a — resolve a mail domain. A disclosed website is trusted as-is; a name
-      // guess must clear an MX check before we'll attach addresses to it.
-      let domain = domainFromWebsite(c.website);
-      let domainVerified = false;
-      if (domain) {
-        domainVerified = await client.hasMxRecord(domain);
-      } else {
-        const guess = guessDomain(c.name);
-        if (guess && (await client.hasMxRecord(guess))) {
-          domain = guess;
-          domainVerified = true;
-        }
-      }
+      // 4a — pick a domain candidate. A filing-disclosed website is trusted; a
+      // name guess is only a candidate until its homepage confirms ownership.
+      const websiteDomain = domainFromWebsite(c.website);
+      const domain = websiteDomain || guessDomain(c.name);
+      const fromWebsite = !!websiteDomain;
 
-      // 4c — Option C: scrape a few pages for real addresses at the domain.
+      let trusted = false;
+      let domainVerified = false;
       const scraped: string[] = [];
-      if (domain && scrapePages > 0) {
-        for (const path of SCRAPE_PATHS.slice(0, scrapePages)) {
-          if (client.budget.exhausted) break;
-          const html = await client.getExternalText(`https://${domain}${path}`);
-          if (html) scraped.push(...extractEmailsAtDomain(html, domain));
+
+      if (domain) {
+        const home = await client.getExternalText(`https://${domain}/`);
+        if (fromWebsite) trusted = true; // issuer disclosed this domain
+        else if (home && pageMentionsCompany(home, c.name)) trusted = true; // guess confirmed
+
+        if (trusted) {
+          if (home) scraped.push(...extractEmailsAtDomain(home, domain));
+          domainVerified = await client.hasMxRecord(domain);
+          for (const path of SCRAPE_PATHS.slice(1, scrapePages)) {
+            if (client.budget.exhausted) break;
+            const html = await client.getExternalText(`https://${domain}${path}`);
+            if (html) scraped.push(...extractEmailsAtDomain(html, domain));
+          }
         }
       }
       const scrapedUniq = [...new Set(scraped)];
 
-      // For each top-3 officer: store the matched scraped address (verified) and
-      // the pattern guesses (not_attempted). Skip entirely if we have no domain.
-      if (domain) {
+      // Only attach addresses when the domain is trusted.
+      if (trusted && domain) {
         const officers = (
           await env.DB.prepare(
             "SELECT id, first, last FROM officers WHERE cik=? AND is_top_3=1 ORDER BY rank"
@@ -346,23 +350,28 @@ async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<nu
               ).bind(cik, o.id, hit, now)
             );
           }
+          // Confidence grade for guesses (free, Worker-native): a pattern on an
+          // ownership-confirmed domain that can receive mail is 'probable';
+          // without MX it's only 'guessed'. (Scraped hits above are 'verified'.)
+          const guessStatus = domainVerified ? "probable" : "guessed";
           for (const cand of generatePatterns(first, last, domain)) {
-            const status = domainVerified ? "not_attempted" : "domain_unverified";
             stmts.push(
               env.DB.prepare(
                 "INSERT INTO emails (cik, officer_id, address, pattern, verification_status) VALUES (?, ?, ?, ?, ?) " +
                   "ON CONFLICT(officer_id, address) DO NOTHING"
-              ).bind(cik, o.id, cand.address, cand.pattern, status)
+              ).bind(cik, o.id, cand.address, cand.pattern, guessStatus)
             );
           }
         }
         if (stmts.length) await env.DB.batch(stmts);
       }
 
+      // Persist the resolved domain only when trusted (so the CSV domain column
+      // never shows a bogus same-slug site).
       await env.DB.prepare(
         "UPDATE companies SET domain=?, domain_verified=?, email_status='done', last_updated_at=? WHERE cik=?"
       )
-        .bind(domain, domainVerified ? 1 : 0, nowIso(), cik)
+        .bind(trusted ? domain : null, domainVerified ? 1 : 0, nowIso(), cik)
         .run();
     } catch (e) {
       // Don't let one company wedge the queue; mark done with no addresses.
