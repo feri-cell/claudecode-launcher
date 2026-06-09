@@ -376,8 +376,11 @@ async function verifyOneViaApi(
   // credit is consumed per submitted email (polling is free).
   if (provider === "verifalia") {
     const auth = "Basic " + btoa(key);
+    // waitTime makes Verifalia hold the response until the job completes (a single
+    // email finishes in ~1-3s), so we usually get 200 + results in one request
+    // and skip polling. Kept under fetchExternalJson's timeout.
     const submit = await client.fetchExternalJson(
-      "https://api.verifalia.com/v2.6/email-validations",
+      "https://api.verifalia.com/v2.6/email-validations?waitTime=10000",
       {
         method: "POST",
         headers: { Authorization: auth, "Content-Type": "application/json" },
