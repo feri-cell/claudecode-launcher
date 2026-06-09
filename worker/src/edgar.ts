@@ -88,6 +88,46 @@ export class EdgarClient {
     return r.text();
   }
 
+  // Like getText but bounded in BOTH bytes and wall-time. SEC documents such as
+  // Reg A+ offering circulars can be many megabytes; reading one whole into memory
+  // and regex-scanning it can exceed the Worker CPU/memory limit and KILL the
+  // isolate uncatchably (before any finally runs), wedging the crawl. We only need
+  // the first stretch to find the issuer URL, so stream and stop at maxBytes.
+  async getTextCapped(url: string, maxBytes = 1_500_000, timeoutMs = 8000): Promise<string | null> {
+    const r = await this.raw(url, "*/*");
+    if (!r.body) return await r.text().catch(() => null);
+    const reader = r.body.getReader();
+    const ac = setTimeout(() => reader.cancel().catch(() => {}), timeoutMs);
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          total += value.length;
+          if (total >= maxBytes) {
+            await reader.cancel().catch(() => {});
+            break;
+          }
+        }
+      }
+    } catch {
+      // truncated read still yields whatever we got
+    } finally {
+      clearTimeout(ac);
+    }
+    if (!chunks.length) return null;
+    const buf = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) {
+      buf.set(c, off);
+      off += c.length;
+    }
+    return new TextDecoder().decode(buf); // utf-8, non-fatal (replaces bad bytes)
+  }
+
   // --- Layer 4 helpers: non-EDGAR fetches ---------------------------------- //
   // Company sites and DNS-over-HTTPS aren't SEC, so they don't carry the EDGAR
   // contact UA — but they DO count against the per-tick request budget and the

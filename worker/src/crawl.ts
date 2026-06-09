@@ -43,7 +43,12 @@ export async function setState(env: Env, key: string, value: string): Promise<vo
 }
 
 // --- lease lock so manual + cron ticks never overlap ----------------------- //
-async function acquireLease(env: Env, ttlMs = 90_000): Promise<boolean> {
+// TTL must stay BELOW the cron interval (60s). If a tick is killed uncatchably
+// (CPU/memory limit) before its finally releases the lease, a longer-than-cron TTL
+// would let the stale lease block every subsequent tick — a permanent wedge. With
+// ttl < 60s the stale lease self-expires before the next cron, so the crawl always
+// recovers on its own.
+async function acquireLease(env: Env, ttlMs = 50_000): Promise<boolean> {
   await env.DB.prepare("INSERT OR IGNORE INTO crawl_state (key, value) VALUES ('lease_until','0')").run();
   const now = Date.now();
   const res = await env.DB.prepare(
@@ -548,11 +553,18 @@ async function fetchFilingHtml(client: EdgarClient, cik: number, accession: stri
   } catch {
     return null;
   }
+  // Largest HTML doc that is still SANELY sized. The whole point of harvesting the
+  // offering circular is that it's the biggest doc — but Reg A+ circulars can be
+  // tens of MB, and reading one whole would blow the Worker's CPU/memory limit and
+  // kill the isolate before any finally runs (wedging the crawl). The issuer URL
+  // sits near the cover/Part-II, so a few-MB doc and a byte-capped read suffice.
+  const MAX_DOC_BYTES = 4_000_000; // skip docs larger than this outright (per index.json size)
   const html = ((idx?.directory?.item as any[]) || [])
     .filter((it) => /\.html?$/i.test(it?.name || "") && !/(^R\d)|index/i.test(it?.name || ""))
+    .filter((it) => (Number(it?.size) || 0) <= MAX_DOC_BYTES)
     .sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0));
   if (!html.length) return null;
-  return await client.getText(`${base}/${html[0].name}`).catch(() => null);
+  return await client.getTextCapped(`${base}/${html[0].name}`).catch(() => null);
 }
 
 async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<number> {
@@ -819,22 +831,26 @@ async function maybeSeedIncremental(env: Env): Promise<void> {
 export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }> {
   if ((await getState(env, "paused")) === "1") return { ran: false, fetched: 0 };
   if (!(await acquireLease(env))) return { ran: false, fetched: 0 };
-  await migrate(env);
-  await maybeSeedIncremental(env).catch(() => {}); // never let this abort a tick
-  const maxReq = Math.max(1, Number(env.MAX_REQUESTS_PER_TICK) || 40);
-  // Give email finding its OWN budget so it can never be starved by
-  // discovery/officers/company. A soft reserve didn't hold: EDGAR 429/5xx retries
-  // spend extra budget per row, so phase 1 overshot and drained everything before
-  // email ran. Two separate budgets make the split hard — total stays ≤ maxReq.
-  const reserve = Math.min(maxReq - 1, Math.max(0, Number(env.EMAIL_REQUEST_RESERVE) || 16));
-  // HTTPS email-verification (Verifalia etc.) gets a tiny dedicated budget when a
-  // key is set — a couple requests per email (submit + poll). Inert otherwise.
-  const verifyReserve = env.VERIFY_API_KEY ? Math.max(2, Number(env.VERIFY_API_REQUESTS_PER_TICK) || 3) : 0;
-  const mainBudget = Math.max(1, maxReq - reserve - verifyReserve);
-  const mainClient = new EdgarClient(env, new Budget(mainBudget));
+  // EVERYTHING below runs inside the try so the finally ALWAYS releases the lease
+  // and stamps last_tick_at — even if migrate() throws or a step blows up. (A throw
+  // between acquireLease and the try used to skip the finally and wedge the crawl.)
+  let mainClient = new EdgarClient(env, new Budget(1));
   let emailFetched = 0;
   let verifyFetched = 0;
   try {
+    await migrate(env);
+    await maybeSeedIncremental(env).catch(() => {}); // never let this abort a tick
+    const maxReq = Math.max(1, Number(env.MAX_REQUESTS_PER_TICK) || 40);
+    // Give email finding its OWN budget so it can never be starved by
+    // discovery/officers/company. A soft reserve didn't hold: EDGAR 429/5xx retries
+    // spend extra budget per row, so phase 1 overshot and drained everything before
+    // email ran. Two separate budgets make the split hard — total stays ≤ maxReq.
+    const reserve = Math.min(maxReq - 1, Math.max(0, Number(env.EMAIL_REQUEST_RESERVE) || 16));
+    // HTTPS email-verification (Verifalia etc.) gets a tiny dedicated budget when a
+    // key is set — a couple requests per email (submit + poll). Inert otherwise.
+    const verifyReserve = env.VERIFY_API_KEY ? Math.max(2, Number(env.VERIFY_API_REQUESTS_PER_TICK) || 3) : 0;
+    const mainBudget = Math.max(1, maxReq - reserve - verifyReserve);
+    mainClient = new EdgarClient(env, new Budget(mainBudget));
     // Phase 1 — round-robin discovery → officers → company on the main budget.
     // A failure in any one stage must not abort the tick.
     const skip = new Set<number>(); // windows that failed this tick
