@@ -48,7 +48,19 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    if (!path.startsWith("/api/")) return env.ASSETS.fetch(request);
+    if (!path.startsWith("/api/")) {
+      const resp = await env.ASSETS.fetch(request);
+      // The dashboard is a single HTML file that changes on every deploy. Serve it
+      // with no-store so neither the browser nor Cloudflare's edge ever shows a
+      // stale build after a deploy (this was causing "I don't see my changes").
+      if ((resp.headers.get("content-type") || "").includes("text/html")) {
+        const h = new Headers(resp.headers);
+        h.set("cache-control", "no-store, no-cache, must-revalidate");
+        h.set("cdn-cache-control", "no-store");
+        return new Response(resp.body, { status: resp.status, headers: h });
+      }
+      return resp;
+    }
 
     try {
       await migrate(env); // ensure Layer 4 columns exist before any /api query reads them
