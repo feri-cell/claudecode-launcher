@@ -467,10 +467,16 @@ async function stepVerifyApi(env: Env, client: EdgarClient, max: number): Promis
   let room = Math.min(max, monthlyCap - used);
   if (dailyCap > 0) room = Math.min(room, dailyCap - dayUsed);
   if (room <= 0) return 0;
+  // Verify ONE best candidate per officer (probable preferred) so each scarce
+  // daily credit cleans a distinct contact rather than burning several on the
+  // same person's 8 pattern variants. Probable officers are checked before guessed.
   const rows = (
     await env.DB.prepare(
-      "SELECT id, address FROM emails WHERE verification_status IN ('probable','guessed') AND response_code IS NULL " +
-        "ORDER BY (verification_status='probable') DESC, id LIMIT ?"
+      "SELECT id, address FROM (" +
+        "SELECT id, address, verification_status AS vs, " +
+        "ROW_NUMBER() OVER (PARTITION BY officer_id ORDER BY (verification_status='probable') DESC, id) AS rn " +
+        "FROM emails WHERE verification_status IN ('probable','guessed') AND response_code IS NULL" +
+        ") WHERE rn=1 ORDER BY (vs='probable') DESC, id LIMIT ?"
     )
       .bind(room)
       .all<any>()

@@ -11,7 +11,11 @@
 
   "assets": {
     "directory": "./public",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // Run the Worker before serving a static asset so we can set no-store on the
+    // dashboard HTML (otherwise the edge serves index.html directly and caches a
+    // stale build after deploys).
+    "run_worker_first": true
   },
 
   "d1_databases": [
