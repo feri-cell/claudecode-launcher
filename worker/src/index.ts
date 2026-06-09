@@ -11,6 +11,7 @@ export interface Env {
   MAX_REQUESTS_PER_TICK: string;
   REQUESTS_PER_SECOND: string;
   EMAIL_PER_TICK?: string;     // max companies to email-enrich per tick (default 40, budget-bound)
+  EMAIL_TICK_EVERY?: string;   // free-plan CPU split: 1 in N ticks is email-only (default 2; 1 = combined every tick, for Workers Paid)
   EMAIL_REQUEST_RESERVE?: string; // per-tick requests reserved for email finding (default 16)
   EMAIL_SCRAPE_PAGES?: string; // site pages to scrape per company (default 3)
   VERIFY_TOKEN?: string;       // shared secret for the external SMTP verifier (wrangler secret)

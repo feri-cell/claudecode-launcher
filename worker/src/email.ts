@@ -314,10 +314,12 @@ export function extractWebsiteFromFiling(
   const toks = companyTokens(companyName); // distinctive name tokens, longest first
   if (!toks.length) return null;
   const slug = toks.join("");
-  // Scan the cover page and the tail (contact/footer) — bounded so huge docs
-  // don't blow the CPU budget.
+  // The caller already caps the offering-circular read (~400KB) to keep CPU within
+  // the free plan's 10ms tick budget, so normally we scan the whole thing. Only for
+  // an unusually large input (e.g. an off-Worker test passing a full doc) do we clip
+  // to the cover page + a short footer tail, where the issuer URL lives.
   const scan =
-    html.length > 800_000 ? html.slice(0, 400_000) + "\n" + html.slice(-400_000) : html;
+    html.length > 500_000 ? html.slice(0, 300_000) + "\n" + html.slice(-80_000) : html;
 
   const counts = new Map<string, number>();
   for (const m of scan.matchAll(FILING_URL_RE)) {

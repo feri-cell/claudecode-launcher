@@ -48,6 +48,10 @@
     "EMAIL_PER_TICK": "40",
     "EMAIL_REQUEST_RESERVE": "16",
     "EMAIL_SCRAPE_PAGES": "3",
+    // Free-plan CPU split: 1 in every N ticks is an EMAIL-ONLY tick (the rest crawl),
+    // so email work gets the whole 10ms-CPU budget instead of being starved by filing
+    // parsing. Set to 1 on Workers Paid (+ a high limits.cpu_ms) to do both per tick.
+    "EMAIL_TICK_EVERY": "2",
     // Web-search domain discovery (optional). The SEARCH_API_KEY itself is a
     // wrangler secret, not here. Quota guards keep usage in the provider's free
     // tier: at most SEARCH_MAX_PER_TICK lookups/tick and SEARCH_MONTHLY_CAP/month.

@@ -580,7 +580,10 @@ async function fetchFilingHtml(client: EdgarClient, cik: number, accession: stri
     .filter((it) => (Number(it?.size) || 0) <= MAX_DOC_BYTES)
     .sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0));
   if (!html.length) return null;
-  return await client.getTextCapped(`${base}/${html[0].name}`).catch(() => null);
+  // 400KB covers the cover page / first pages where the issuer website prints, while
+  // keeping decode+regex CPU low enough to fit a company inside the free plan's
+  // 10ms-CPU tick budget. Issuers whose URL sits deeper are recovered via Brave.
+  return await client.getTextCapped(`${base}/${html[0].name}`, 400_000).catch(() => null);
 }
 
 async function stepEmail(env: Env, client: EdgarClient, max: number): Promise<number> {
@@ -847,6 +850,10 @@ async function maybeSeedIncremental(env: Env): Promise<void> {
 export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }> {
   if ((await getState(env, "paused")) === "1") return { ran: false, fetched: 0 };
   if (!(await acquireLease(env))) return { ran: false, fetched: 0 };
+  // Stamp liveness at the START too. On the free plan a tick can be CPU-killed before
+  // the finally runs, so a start-stamp keeps last_tick_at fresh (the dashboard shows
+  // "alive") even when the completion-stamp below never fires.
+  await setState(env, "last_tick_at", nowIso());
   // EVERYTHING below runs inside the try so the finally ALWAYS releases the lease
   // and stamps last_tick_at — even if migrate() throws or a step blows up. (A throw
   // between acquireLease and the try used to skip the finally and wedge the crawl.)
@@ -867,40 +874,63 @@ export async function tick(env: Env): Promise<{ ran: boolean; fetched: number }>
     const verifyReserve = env.VERIFY_API_KEY ? Math.max(2, Number(env.VERIFY_API_REQUESTS_PER_TICK) || 3) : 0;
     const mainBudget = Math.max(1, maxReq - reserve - verifyReserve);
     mainClient = new EdgarClient(env, new Budget(mainBudget));
-    // Phase 1 — round-robin discovery → officers → company on the main budget.
-    // A failure in any one stage must not abort the tick.
-    const skip = new Set<number>(); // windows that failed this tick
+
+    // FREE-PLAN CPU SPLIT. On the Workers free plan every invocation is killed at
+    // 10ms of CPU — not enough to BOTH parse filings AND find emails in one tick, so
+    // the email phase never ran (last_tick_at froze; discovery advanced only because
+    // its DB writes commit before the kill). Fix: ROTATE. Most ticks do crawl work;
+    // every EMAIL_TICK_EVERY-th tick is an EMAIL-ONLY tick that spends the whole 10ms
+    // on email + verification with no parsing competing. Each step self-commits per
+    // row, so a tick killed mid-way still advances the data. Set EMAIL_TICK_EVERY=1
+    // on Workers Paid (with a high limits.cpu_ms) to do everything every tick.
+    const rot = Number((await getState(env, "tick_rotation")) || "0");
+    await setState(env, "tick_rotation", String((rot + 1) % 1_000_000));
+    const emailEvery = Math.max(1, Number(env.EMAIL_TICK_EVERY) || 2);
+    const emailTick = emailEvery <= 1 || rot % emailEvery === 0;
+    const crawlTick = emailEvery <= 1 || !emailTick;
     let didAny = 0;
-    while (!mainClient.budget.exhausted) {
-      let did = 0;
-      for (let i = 0; i < 5 && !mainClient.budget.exhausted; i++) {
-        const r = await stepDiscovery(env, mainClient, skip).catch(() => "ok" as const);
-        if (r === "none") break;
-        did++;
+
+    if (crawlTick) {
+      // Phase 1 — round-robin discovery → officers → company on the main budget.
+      // A failure in any one stage must not abort the tick.
+      const skip = new Set<number>(); // windows that failed this tick
+      while (!mainClient.budget.exhausted) {
+        let did = 0;
+        for (let i = 0; i < 5 && !mainClient.budget.exhausted; i++) {
+          const r = await stepDiscovery(env, mainClient, skip).catch(() => "ok" as const);
+          if (r === "none") break;
+          did++;
+        }
+        if (!mainClient.budget.exhausted) did += await stepOfficers(env, mainClient, 8).catch(() => 0);
+        if (!mainClient.budget.exhausted) did += await stepCompany(env, mainClient, 12).catch(() => 0);
+        didAny += did;
+        if (did === 0) break;
       }
-      if (!mainClient.budget.exhausted) did += await stepOfficers(env, mainClient, 8).catch(() => 0);
-      if (!mainClient.budget.exhausted) did += await stepCompany(env, mainClient, 12).catch(() => 0);
-      didAny += did;
-      if (did === 0) break;
     }
-    // Phase 2 — email finding on its own budget: the reserve PLUS whatever phase 1
-    // left unspent (so a caught-up backfill pours its whole budget into email).
-    const emailBudget = reserve + mainClient.budget.remaining;
-    const emailMax = Math.max(1, Number(env.EMAIL_PER_TICK) || 40);
-    if (emailBudget > 0) {
-      const emailClient = new EdgarClient(env, new Budget(emailBudget));
-      didAny += await stepEmail(env, emailClient, emailMax).catch(() => 0);
-      emailFetched = emailClient.fetched;
+
+    if (emailTick) {
+      // Phase 2 — email finding. On an email-only tick it gets almost the whole
+      // request budget; in combined (paid) mode it gets the reserve + phase-1 leftover.
+      const emailBudget = crawlTick ? reserve + mainClient.budget.remaining : Math.max(1, maxReq - verifyReserve);
+      const emailMax = Math.max(1, Number(env.EMAIL_PER_TICK) || 40);
+      if (emailBudget > 0) {
+        const emailClient = new EdgarClient(env, new Budget(emailBudget));
+        didAny += await stepEmail(env, emailClient, emailMax).catch(() => 0);
+        emailFetched = emailClient.fetched;
+      }
+      // Phase 3 — HTTPS verification on its own tiny budget (≤ a few emails/tick;
+      // the real limit is the daily/monthly free-tier cap inside stepVerifyApi).
+      if (verifyReserve > 0) {
+        const verifyClient = new EdgarClient(env, new Budget(verifyReserve));
+        const verifyMax = Math.max(1, Number(env.VERIFY_API_PER_TICK) || 1);
+        didAny += await stepVerifyApi(env, verifyClient, verifyMax).catch(() => 0);
+        verifyFetched = verifyClient.fetched;
+      }
     }
-    // Phase 3 — HTTPS verification on its own tiny budget (≤ a few emails/tick;
-    // the real limit is the daily/monthly free-tier cap inside stepVerifyApi).
-    if (verifyReserve > 0) {
-      const verifyClient = new EdgarClient(env, new Budget(verifyReserve));
-      const verifyMax = Math.max(1, Number(env.VERIFY_API_PER_TICK) || 1);
-      didAny += await stepVerifyApi(env, verifyClient, verifyMax).catch(() => 0);
-      verifyFetched = verifyClient.fetched;
-    }
-    if (didAny === 0) await setState(env, "active", "0"); // nothing left — caught up
+
+    // Only a CRAWL tick can declare the backfill caught up; an email tick finding
+    // nothing just means the email queue drained, which must not pause discovery.
+    if (crawlTick && didAny === 0) await setState(env, "active", "0");
   } finally {
     await setState(env, "last_tick_at", nowIso());
     await releaseLease(env);
