@@ -121,6 +121,8 @@ async function progress(env: Env) {
     q("SELECT COUNT(*) AS total, SUM(is_top_3=1) AS top3 FROM officers"),
     q(
       "SELECT (SELECT COUNT(*) FROM officers WHERE is_top_3=1 AND id IN (SELECT officer_id FROM emails WHERE verification_status='verified')) AS verified, " +
+        "(SELECT COUNT(*) FROM emails WHERE verification_status='verified' AND (response_code LIKE 'smtp%' OR response_code LIKE 'verifalia%' OR response_code LIKE 'api%')) AS verified_mailbox, " +
+        "(SELECT COUNT(*) FROM emails WHERE verification_status='verified' AND response_code='scraped_site') AS verified_scraped, " +
         "(SELECT COUNT(*) FROM officers WHERE is_top_3=1 AND id IN (SELECT officer_id FROM emails WHERE verification_status='probable') " +
         "  AND id NOT IN (SELECT officer_id FROM emails WHERE verification_status='verified')) AS probable, " +
         "(SELECT COUNT(*) FROM emails WHERE response_code IS NOT NULL AND response_code LIKE 'smtp%') AS smtp_checked, " +
@@ -146,7 +148,7 @@ async function progress(env: Env) {
     filings: { total: num(fil?.total), parsed: num(fil?.parsed), incomplete: num(fil?.incomplete) },
     companies: { total: num(comp?.total), enriched: num(comp?.enriched), with_website: num(comp?.with_website), operating: num(comp?.operating) },
     officers: { total: num(off?.total), top3: num(off?.top3) },
-    emails: { verified: num(eml?.verified), probable: num(eml?.probable), invalid: num(eml?.invalid), smtp_checked: num(eml?.smtp_checked), with_any: num(eml?.with_any), companies_done: num(eml?.companies_done) },
+    emails: { verified: num(eml?.verified), verified_mailbox: num(eml?.verified_mailbox), verified_scraped: num(eml?.verified_scraped), probable: num(eml?.probable), invalid: num(eml?.invalid), smtp_checked: num(eml?.smtp_checked), with_any: num(eml?.with_any), companies_done: num(eml?.companies_done) },
   };
 }
 const num = (v: any) => Number(v ?? 0);
@@ -161,6 +163,7 @@ const CONTACTS_SQL =
   "f1.regulation, f1.form_type, f1.filing_date, " +
   "o.first, o.last, o.role, o.role_priority, o.source_accession, o.source_type, " +
   "(SELECT e.address FROM emails e WHERE e.officer_id=o.id AND e.verification_status='verified' ORDER BY e.id LIMIT 1) AS email, " +
+  "(SELECT e.response_code FROM emails e WHERE e.officer_id=o.id AND e.verification_status='verified' ORDER BY e.id LIMIT 1) AS email_code, " +
   "(SELECT e.address FROM emails e WHERE e.officer_id=o.id AND e.verification_status IN ('probable','guessed') " +
   "  ORDER BY (e.verification_status='probable') DESC, e.id LIMIT 1) AS guessed_email, " +
   "(SELECT e.verification_status FROM emails e WHERE e.officer_id=o.id AND e.verification_status!='invalid' " +
@@ -224,9 +227,12 @@ async function exportCsv(env: Env): Promise<Response> {
     const edgarUrl = r.source_accession
       ? `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${r.cik}&type=&dateb=&owner=include&count=40`
       : "";
-    // Human-readable tier for the dashboard: Verified / Probable / Guessed.
+    // Human-readable tier; 'verified' is split by method so SMTP/mailbox-checked
+    // emails are distinguishable from ones merely published on the company site.
     const statusLabel = r.email
-      ? "Verified"
+      ? (/^(smtp|verifalia|api)/.test(String(r.email_code || "").toLowerCase())
+          ? "Verified (SMTP)"
+          : "Verified (site)")
       : r.email_status === "probable"
         ? "Probable"
         : r.guessed_email
