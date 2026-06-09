@@ -24,8 +24,29 @@ export function asciiFold(raw: string): string {
     .replace(/[^a-z0-9]+/g, "");
 }
 
+// --- registrable domain ---------------------------------------------------- //
+// Reduce any host to its registrable (eTLD+1) form so a filing that prints an IR /
+// marketing SUBDOMAIN ("ir.acme.com", "investors.acme.com") still yields acme.com.
+// This matters a lot for the on-site path: scraping/matching/guessing must use the
+// root domain, or person@acme.com is missed and guesses become person@ir.acme.com
+// (undeliverable). Issuers are overwhelmingly US single-label TLDs, so "last two
+// labels" is right; a small set of known multi-label suffixes is handled too.
+const MULTI_SUFFIXES = new Set([
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz",
+  "co.za", "com.br", "co.in", "co.jp", "com.mx", "com.sg", "com.hk", "com.cn",
+]);
+export function registrableDomain(host: string | null | undefined): string | null {
+  if (!host) return null;
+  const h = host.toLowerCase().trim().replace(/\.+$/, "").replace(/^www\./, "");
+  const labels = h.split(".").filter(Boolean);
+  if (labels.length < 2) return null;
+  const lastTwo = labels.slice(-2).join(".");
+  if (labels.length >= 3 && MULTI_SUFFIXES.has(lastTwo)) return labels.slice(-3).join(".");
+  return lastTwo;
+}
+
 // --- domain from a disclosed website --------------------------------------- //
-// "https://www.Acme.com/investors" -> "acme.com". Returns null if unparseable.
+// "https://ir.Acme.com/investors" -> "acme.com". Returns null if unparseable.
 export function domainFromWebsite(website: string | null | undefined): string | null {
   if (!website) return null;
   let host: string;
@@ -35,9 +56,9 @@ export function domainFromWebsite(website: string | null | undefined): string | 
   } catch {
     return null;
   }
-  host = host.replace(/^www\./, "");
-  if (!host.includes(".") || host.length < 4) return null;
-  return host;
+  const reg = registrableDomain(host);
+  if (!reg || !reg.includes(".") || reg.length < 4) return null;
+  return reg;
 }
 
 // --- name-heuristic domain guess ------------------------------------------- //

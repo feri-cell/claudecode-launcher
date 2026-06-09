@@ -13,6 +13,7 @@ import { parseDocument } from "./officers";
 import { TOP_N_OFFICERS } from "./roles";
 import {
   domainFromWebsite,
+  registrableDomain,
   guessDomainCandidates,
   generatePatterns,
   generateForPattern,
@@ -356,8 +357,8 @@ async function resolveDomainViaSearch(
   if (!j) return null;
   for (const u of pick(j)) {
     try {
-      const host = new URL(u).hostname.toLowerCase().replace(/^www\./, "");
-      if (host.length < 4 || isNonIssuerHost(host)) continue;
+      const host = registrableDomain(new URL(u).hostname);
+      if (!host || host.length < 4 || isNonIssuerHost(host)) continue;
       if (hostMatchesCompany(host, name)) return host;
     } catch {
       /* skip malformed URL */
