@@ -194,12 +194,19 @@ async function contacts(env: Env, limit: number) {
 // --- external SMTP verifier support ---------------------------------------- //
 // Hand out pattern-guess addresses that haven't been SMTP-probed yet (no
 // response_code). 'probable' (domain has MX) first — they're worth probing most.
+// Dedupe to ONE best candidate per officer (probable before guessed) so a probe
+// budget cleans a distinct contact rather than burning several on the same
+// person's 8 pattern variants — mirrors stepVerifyApi's one-best-per-officer rule.
 async function verifyPending(env: Env, limit: number) {
   const rows = (
     await env.DB.prepare(
-      "SELECT id, address FROM emails " +
-        "WHERE verification_status IN ('probable','guessed') AND response_code IS NULL " +
-        "ORDER BY (verification_status='probable') DESC, id LIMIT ?"
+      "SELECT id, address FROM (" +
+        "SELECT id, address, " +
+        "ROW_NUMBER() OVER (PARTITION BY officer_id " +
+        "  ORDER BY (verification_status='probable') DESC, id) AS rn " +
+        "FROM emails " +
+        "WHERE verification_status IN ('probable','guessed') AND response_code IS NULL" +
+        ") WHERE rn=1 ORDER BY id LIMIT ?"
     )
       .bind(limit)
       .all<any>()
